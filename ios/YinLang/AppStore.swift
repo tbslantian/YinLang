@@ -28,7 +28,11 @@ final class AppStore: ObservableObject {
         defaults.set(base, forKey: "nav-url"); defaults.set(user, forKey: "nav-user"); connectionRevision += 1
     }
     func disconnect() { defaults.removeObject(forKey: "nav-url"); defaults.removeObject(forKey: "nav-user"); connectionRevision += 1 }
-    func artwork(_ item: MediaItem) -> URL? { URL(string: item.source == "library" ? nav?.cover(item.cover) ?? "" : item.cover.replacingOccurrences(of: "{size}", with: "400")) }
+    func libraryItem(_ row: JSONObject, kind: String = "song") -> MediaItem { var row = row; row["_account"] = nav?.identity ?? ""; return MediaItem(row, source: "library", kind: kind) }
+    func artwork(_ item: MediaItem) -> URL? {
+        if item.source == "library" && item.raw.string("_account") != nav?.identity { return nil }
+        return URL(string: item.source == "library" ? nav?.cover(item.cover) ?? "" : item.cover.replacingOccurrences(of: "{size}", with: "400"))
+    }
     func toggleLike(_ item: MediaItem) {
         if let index = liked.firstIndex(where: { $0.id == item.id }) { liked.remove(at: index) } else { liked.insert(item, at: 0) }
     }
@@ -73,10 +77,31 @@ final class AppStore: ObservableObject {
                 guard let sources = try await runtime.call("bookSources()") as? [JSONObject], !sources.isEmpty else { throw AppFailure.message("插件没有注册听书源") }
             } else { _ = try await runtime.call("lxInstallation()", timeout: 20) }
         } catch { invalidate(plugin.id); throw error }
-        if let index = plugins.firstIndex(where: { $0.name == plugin.name && $0.books == plugin.books }) {
+        if let index = plugins.firstIndex(where: { ((!address.isEmpty && $0.address == address) || $0.name == plugin.name) && $0.books == plugin.books }) {
             let previous = plugins[index]; invalidate(previous.id); invalidate(plugin.id)
             plugin.id = previous.id; plugin.enabled = previous.enabled; plugins[index] = plugin
         } else { plugins.append(plugin) }
+    }
+    func updateSources() async {
+        let installed = plugins.filter { $0.enabled && !$0.address.isEmpty }
+        var failures: [String] = []
+        for plugin in installed {
+            do { try await installFromURL(plugin.address, books: plugin.books) }
+            catch { failures.append(plugin.name + "：" + error.localizedDescription) }
+        }
+        defaults.set(Date(), forKey: "source-update-date")
+        if !failures.isEmpty { message = failures.joined(separator: "\n") }
+    }
+    func refreshFollowed() async {
+        for item in followed { _ = try? await catalog(item.kind == "chart" ? "chart" : "list", ["source": item.source, "id": item.key, "page": 1], refresh: true) }
+        if let nav { _ = try? await nav.get("getPlaylists") }
+        defaults.set(Date(), forKey: "playlist-update-date")
+    }
+    func refreshIfDue() async {
+        let now = Date()
+        if defaults.bool(forKey: "auto-source-updates"), now.timeIntervalSince(defaults.object(forKey: "source-update-date") as? Date ?? .distantPast) >= 86400 { await updateSources() }
+        let interval = defaults.object(forKey: "playlist-update-hours") as? Int ?? 6
+        if interval >= 0, now.timeIntervalSince(defaults.object(forKey: "playlist-update-date") as? Date ?? .distantPast) >= Double(interval * 3600) { await refreshFollowed() }
     }
     func installFromURL(_ address: String, books: Bool) async throws {
         guard let url = URL(string: address), ["https", "http"].contains(url.scheme ?? "") else { throw AppFailure.message("请填写 HTTP/HTTPS 插件直链") }
@@ -111,6 +136,7 @@ final class AppStore: ObservableObject {
         item.id + (item.source == "library" ? ":\(nav?.identity ?? ""):\(defaults.string(forKey: "nav-bitrate") ?? "0"):\(defaults.string(forKey: "nav-format") ?? "mp3")" : ":\(defaults.string(forKey: "quality") ?? "320k")")
     }
     func resolve(_ item: MediaItem, fallback: Bool = true) async throws -> (URL, [String: String], String) {
+        if item.source == "library", item.raw.string("_account") != nav?.identity { throw AppFailure.message("音乐库账号已变更，请从当前音乐库选择歌曲") }
         if let download = downloads.first(where: { $0.item.id == item.id }), FileManager.default.fileExists(atPath: Disk.documents.appendingPathComponent(download.filename).path) { return (Disk.documents.appendingPathComponent(download.filename), [:], "本机下载") }
         if let cached = await MediaCache.shared.cached(cacheKey(item), books: item.kind == "episode") { return (cached, [:], "离线缓存") }
         if item.source == "library" {
@@ -126,15 +152,36 @@ final class AppStore: ObservableObject {
         let sources = plugins.filter { !$0.books && $0.enabled }
         guard !sources.isEmpty else { throw AppFailure.message("请在音乐设置导入 LX JavaScript 音源") }
         var lastError = "音源解析失败"
+        var capabilities: [String: JSONObject] = [:]
+        for plugin in sources { do { let runtime = try await runtime(plugin.id, scripts: plugin.script); capabilities[plugin.id] = try await runtime.call("lxPlatforms()", timeout: 20) as? JSONObject ?? [:] } catch { lastError = error.localizedDescription } }
+        var matches: [String: [MediaItem]] = [item.source: [item]]
+        // Search other supported platforms lazily after the original recording fails.
+        let alternatives = Platform.allCases.map(\.rawValue).filter { candidate in candidate != "all" && candidate != item.source && capabilities.values.contains { $0[candidate] != nil } }
         for quality in qualities {
-            for plugin in sources {
-                do {
-                    activity = "\(plugin.name) · \(quality)"
-                    let runtime = try await runtime(plugin.id, scripts: plugin.script)
-                    let result = try await runtime.call("lxResolve(\(quote(item.source)),\(quote(quality)),\(jsonText(item.raw)))", timeout: 35) as? JSONObject ?? [:]
-                    guard let url = URL(string: result.string("url")), ["http", "https"].contains(url.scheme ?? "") else { continue }
-                    return (url, result["headers"] as? [String: String] ?? [:], "\(plugin.name) · \(quality)")
-                } catch { lastError = error.localizedDescription }
+            for platform in [item.source] + alternatives {
+                try Task.checkCancellation()
+                if matches[platform] == nil {
+                    do {
+                        let result = try await catalog("search", ["source": platform, "query": item.title + " " + item.subtitle, "page": 1])
+                        matches[platform] = result.rows("list").map { MediaItem($0) }.filter { SongMatch.same(item, $0) }.sorted { abs($0.duration - item.duration) < abs($1.duration - item.duration) }
+                    } catch { matches[platform] = [] }
+                }
+                for candidate in matches[platform] ?? [] {
+                    for plugin in sources {
+                        guard let advertised = capabilities[plugin.id]?[platform] as? JSONObject else { continue }
+                        let supported = advertised["qualitys"] as? [String] ?? []
+                        guard supported.isEmpty || supported.contains(quality) else { continue }
+                        do {
+                            activity = "\(plugin.name) · \(Platform(rawValue: platform)?.title ?? platform) · \(quality)"
+                            let runtime = try await runtime(plugin.id, scripts: plugin.script)
+                            let result = try await runtime.call("lxResolve(\(quote(platform)),\(quote(quality)),\(jsonText(candidate.raw)))", timeout: 35) as? JSONObject ?? [:]
+                            guard let url = URL(string: result.string("url")), ["http", "https"].contains(url.scheme ?? "") else { continue }
+                            let headers = result["headers"] as? [String: String] ?? [:]
+                            try await AudioProbe(quality: quality).verify(url, headers: headers); try Task.checkCancellation()
+                            return (url, headers, activity)
+                        } catch { lastError = error.localizedDescription }
+                    }
+                }
             }
         }
         throw AppFailure.message(lastError)

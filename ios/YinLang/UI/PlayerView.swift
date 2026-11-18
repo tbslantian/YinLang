@@ -50,6 +50,7 @@ struct PlayerView: View {
                 }.foregroundStyle(foreground).frame(maxWidth: 1400).frame(maxWidth: .infinity)
             }
         }.presentationDragIndicator(.visible)
+            .sheet(isPresented: $player.showQueue) { QueueView().environmentObject(store).environmentObject(player) }
             .sheet(isPresented: $effects) { EffectsView() }
             .confirmationDialog("睡眠定时", isPresented: $sleep, titleVisibility: .visible) {
                 ForEach([15, 30, 45, 60, 90], id: \.self) { minutes in Button("\(minutes) 分钟后暂停") { player.setSleep(minutes) } }
@@ -120,7 +121,7 @@ struct PlayerView: View {
             Toggle("旋转黑胶", isOn: $vinyl)
             Menu("播放速度") { ForEach([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3], id: \.self) { rate in Button(String(format: "%g×", rate)) { player.speed = Float(rate) } } }
             Menu("音质") { ForEach(["128k", "192k", "320k", "flac", "flac24bit", "hires", "atmos", "master"], id: \.self) { value in Button(value) { UserDefaults.standard.set(value, forKey: "quality") } } }
-            Button("系统音量") { effects = true }
+            Button("音效与媒体音量") { effects = true }
         } label: { Image(systemName: "ellipsis").font(.title2) }.accessibilityLabel("播放器菜单")
     }
 }
@@ -137,7 +138,31 @@ struct SystemVolume: UIViewRepresentable {
 }
 
 struct EffectsView: View {
-    var body: some View { NavigationStack { Form { Section("媒体音量") { SystemVolume().frame(height: 44) }; Section { Text("音频通过 iOS 原生播放引擎输出，可在系统辅助功能的音频设置中调节耳机音效。").font(.subheadline).foregroundStyle(.secondary) } }.navigationTitle("音量") } }
+    @StateObject private var effects = AudioEffects.shared
+    @State private var name = ""
+    @State private var savePreset = false
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section { Toggle("启用音效", isOn: $effects.config.enabled); Button("恢复原声（保留设置）") { effects.config.enabled = false } }
+                Section("十段均衡器") {
+                    Menu("快速预设") { ForEach(Array(AudioEffects.presets.enumerated()), id: \.offset) { _, preset in Button(preset.0) { effects.preset(preset.1) } } }
+                    ForEach(0..<10, id: \.self) { band in HStack { Text(AudioEffects.frequencies[band]).font(.caption.monospacedDigit()).frame(width: 33); Slider(value: Binding(get: { Double(effects.config.gains[band]) }, set: { effects.config.gains[band] = Float($0) }), in: -12...12, step: 0.5); Text(String(format: "%+.1f", effects.config.gains[band])).font(.caption.monospacedDigit()).frame(width: 40) } }
+                }
+                Section("环境与音高") {
+                    Text("混响干湿：\(Int(effects.config.wet * 100))% "); Slider(value: $effects.config.wet, in: 0...1)
+                    Text("独立升降调：\(Int(effects.config.pitch)) 半音"); Slider(value: $effects.config.pitch, in: -12...12, step: 1)
+                    Text("耳机立体声环绕：\(Int(effects.config.surround * 100))%"); Slider(value: $effects.config.surround, in: 0...1)
+                }
+                Section("自定义预设") {
+                    Button("保存当前设置") { savePreset = true }
+                    ForEach(effects.custom.keys.sorted(), id: \.self) { key in Button(key) { if let config = effects.custom[key] { effects.config = config } } }
+                }
+                Section("媒体音量") { SystemVolume().frame(height: 44) }
+                Section { Text("音效对支持音频处理的本机音轨生效；HLS 与外部投送取决于系统输出路径。").font(.caption).foregroundStyle(.secondary) }
+            }.navigationTitle("音效").alert("保存预设", isPresented: $savePreset) { TextField("名称", text: $name); Button("保存") { effects.save(name); name = "" }; Button("取消", role: .cancel) {} }
+        }
+    }
 }
 
 struct QueueView: View {

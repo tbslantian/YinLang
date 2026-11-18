@@ -38,7 +38,7 @@ def configs(name, settings):
         ids.append(obj(name + config, f'{{isa = XCBuildConfiguration; buildSettings = {{{body}}}; name = {config}; }}'))
     return obj(name + 'configs', f'{{isa = XCConfigurationList; buildConfigurations = {array(ids)}; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; }}')
 
-app_sources = [file(str(path.relative_to(ROOT)).replace('\\', '/'), 'sourcecode.swift') for path in sorted((ROOT / 'YinLang').rglob('*.swift'))]
+app_sources = [file(str(path.relative_to(ROOT)).replace('\\', '/'), {'.swift':'sourcecode.swift','.c':'sourcecode.c.c','.m':'sourcecode.c.objc'}[path.suffix]) for path in sorted((ROOT / 'YinLang').rglob('*')) if path.suffix in ['.swift','.c','.m']]
 unit_sources = [file(str(path.relative_to(ROOT)).replace('\\', '/'), 'sourcecode.swift') for path in sorted((ROOT / 'YinLangTests').glob('*.swift'))]
 ui_sources = [file(str(path.relative_to(ROOT)).replace('\\', '/'), 'sourcecode.swift') for path in sorted((ROOT / 'YinLangUITests').glob('*.swift'))]
 assets = file('YinLang/Resources/Assets.xcassets', 'folder.assetcatalog')

@@ -87,6 +87,10 @@ final class Player: ObservableObject {
                 try AVAudioSession.sharedInstance().setActive(true)
                 let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
                 let item = AVPlayerItem(asset: asset)
+                item.audioTimePitchAlgorithm = .spectral
+                AudioEffects.shared.apply()
+                if let track = try? await asset.loadTracks(withMediaType: .audio).first { _ = YLAttachAudioEffects(item, track) }
+                try Task.checkCancellation(); guard generation == token else { return }
                 itemObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
                     Task { @MainActor in
                         guard let self, self.generation == token else { return }

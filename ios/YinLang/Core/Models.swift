@@ -38,9 +38,13 @@ struct MediaItem: Identifiable, Codable, Equatable, Hashable {
     var source: String
     var payload: Data
     var kind: String = "song"
-    var id: String { source + ":" + kind + ":" + key }
+    var id: String { source + ":" + kind + ":" + (source == "library" ? raw.string("_account") + ":" : "") + key }
     var raw: JSONObject { (try? JSONSerialization.jsonObject(with: payload)) as? JSONObject ?? [:] }
-    var duration: Double { (raw["duration"] as? Double) ?? 0 }
+    var duration: Double {
+        if let seconds = raw["duration"] as? Double { return seconds }
+        let text = raw.string("interval", "duration")
+        return text.split(separator: ":").reduce(0.0) { $0 * 60 + (Double($1) ?? 0) }
+    }
     init(_ row: JSONObject, source: String? = nil, kind: String = "song") {
         self.source = source ?? row.string("source")
         self.kind = kind
@@ -49,6 +53,20 @@ struct MediaItem: Identifiable, Codable, Equatable, Hashable {
         subtitle = row.string("singer", "artist", "author", "description", "intro")
         cover = row.string("img", "pic", "cover", "coverUrl", "coverArt", "imgurl")
         payload = (try? JSONSerialization.data(withJSONObject: row, options: .sortedKeys)) ?? Data("{}".utf8)
+    }
+}
+
+enum SongMatch {
+    static func normalized(_ text: String) -> String {
+        text.folding(options: [.widthInsensitive, .caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX")).unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+    }
+    static func artists(_ text: String) -> Set<String> {
+        let text = text.replacingOccurrences(of: #"(?i)\s+(?:feat\.?|ft\.?)\s+"#, with: "/", options: .regularExpression)
+        return Set(text.components(separatedBy: CharacterSet(charactersIn: "、/&,，;；")).map(normalized).filter { !$0.isEmpty })
+    }
+    static func same(_ wanted: MediaItem, _ found: MediaItem) -> Bool {
+        guard !normalized(wanted.title).isEmpty, normalized(wanted.title) == normalized(found.title), !artists(wanted.subtitle).intersection(artists(found.subtitle)).isEmpty else { return false }
+        return wanted.duration <= 0 || found.duration <= 0 || abs(wanted.duration - found.duration) <= max(8, min(wanted.duration, found.duration) / 20)
     }
 }
 

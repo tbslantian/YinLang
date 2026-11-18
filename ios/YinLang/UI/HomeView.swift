@@ -18,12 +18,12 @@ struct HomeView: View {
                     if resolved != "classic" { Text(resolved == "gallery" ? "一首歌，一段故事。" : "此刻，听点喜欢的。").font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 8) }
                     if colorScheme == .dark && resolved == "classic" {
                         HStack(spacing: 12) {
-                            NavigationLink { MusicView() } label: { homeCard(books: false, dark: true, width: (proxy.size.width - 44) / 2) }
-                            NavigationLink { BooksView() } label: { homeCard(books: true, dark: true, width: (proxy.size.width - 44) / 2) }
+                            NavigationLink { MusicView() } label: { homeCard(books: false, dark: true, width: (min(1000, proxy.size.width) - 44) / 2) }
+                            NavigationLink { BooksView() } label: { homeCard(books: true, dark: true, width: (min(1000, proxy.size.width) - 44) / 2) }
                         }
                     } else {
-                        NavigationLink { MusicView() } label: { homeCard(books: false, dark: false, width: proxy.size.width - 32) }
-                        NavigationLink { BooksView() } label: { homeCard(books: true, dark: false, width: proxy.size.width - 32) }
+                        NavigationLink { MusicView() } label: { homeCard(books: false, dark: false, width: min(1000, proxy.size.width) - 32) }
+                        NavigationLink { BooksView() } label: { homeCard(books: true, dark: false, width: min(1000, proxy.size.width) - 32) }
                     }
                     NavigationLink { DownloadsView() } label: {
                         HStack { Text("本机下载").foregroundStyle(.primary); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }.padding(18).background(.background, in: RoundedRectangle(cornerRadius: 16))
@@ -81,7 +81,7 @@ struct MusicView: View {
         }.background(Palette.paper).navigationTitle("发现音乐").task {
             if listsCover == nil, let rows = try? await store.catalog("lists", ["source": "wy", "sort": "@hot", "page": 1]).rows("list"), let first = rows.first { listsCover = store.artwork(MediaItem(first)) }
             if chartsCover == nil, let row = try? await store.catalog("charts", ["source": "wy"]).rows("list").first,
-               let cover = try? await store.catalog("chart-cover", ["source": "wy", "id": row.string("id", "bangid")]) { chartsCover = URL(string: cover.string("cover", "url")) }
+               let cover = try? await store.catalog("chart-cover", ["source": "wy", "id": row.string("id", "bangid")]) { chartsCover = cover.rows("list").first.flatMap { URL(string: $0.string("img")) } }
         }
     }
 }

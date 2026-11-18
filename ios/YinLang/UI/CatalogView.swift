@@ -71,7 +71,7 @@ struct CatalogView: View {
         do {
             let items: [MediaItem]; let hasMore: Bool
             if librarySearch, let nav = store.nav {
-                let result = try await nav.search(query, offset: (requested - 1) * 50); items = result.map { MediaItem($0, source: "library") }; hasMore = result.count == 50
+                let result = try await nav.search(query, offset: (requested - 1) * 50); items = result.map { store.libraryItem($0) }; hasMore = result.count == 50
             } else {
                 let result = try await store.catalog(mode, ["source": platform, "query": query, "sort": sort, "tag": tag, "page": requested], refresh: refresh)
                 items = result.rows("list").map { MediaItem($0, kind: mode == "charts" ? "chart" : mode == "lists" ? "playlist" : "song") }; hasMore = result["more"] as? Bool ?? false

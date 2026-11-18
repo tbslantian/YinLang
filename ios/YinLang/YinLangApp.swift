@@ -4,12 +4,16 @@ import SwiftUI
 struct YinLangApp: App {
     @StateObject private var store = AppStore()
     @StateObject private var player = Player()
-    @AppStorage("appearance") private var appearance = "system"
+    @AppStorage("appearance") private var appearance = "light"
+    @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
-            RootView().environmentObject(store).environmentObject(player)
-                .tint(Palette.accent).preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                RootView().environmentObject(store).environmentObject(player)
+                    .tint(Palette.accent).preferredColorScheme(Appearance.scheme(appearance, date: context.date))
+            }
                 .onAppear { player.attach(store) }
+                .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await store.refreshIfDue() } } }
                 .onOpenURL { url in
                     Task {
                         let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
@@ -43,7 +47,7 @@ struct RootView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { if player.current != nil { MiniPlayer() } }
         .sheet(isPresented: $player.showPlayer) { PlayerView().environmentObject(store).environmentObject(player) }
-        .sheet(isPresented: $player.showQueue) { QueueView().environmentObject(store).environmentObject(player) }
+        .sheet(isPresented: Binding(get: { player.showQueue && !player.showPlayer }, set: { player.showQueue = $0 })) { QueueView().environmentObject(store).environmentObject(player) }
         .alert("音浪", isPresented: Binding(get: { store.message != nil }, set: { if !$0 { store.message = nil } })) { Button("好") { store.message = nil } } message: { Text(store.message ?? "") }
     }
     @ViewBuilder private func destination(_ page: Destination) -> some View {

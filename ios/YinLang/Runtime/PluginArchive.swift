@@ -61,7 +61,7 @@ enum PluginArchive {
             guard start >= 0, start + size <= data.count else { throw AppFailure.message("ZIP 数据无效") }
             let compressed = data.subdata(in: start..<(start + size)); let bytes = try method == 0 ? compressed : decompress(compressed, raw: true)
             let actualCRC = bytes.withUnsafeBytes { crc32(0, $0.bindMemory(to: Bytef.self).baseAddress, uInt(bytes.count)) }
-            guard bytes.count == expanded, actualCRC == crc else { throw AppFailure.message("插件校验失败") }
+            guard bytes.count == expanded, Int(actualCRC) == crc else { throw AppFailure.message("插件校验失败") }
             guard let text = String(data: bytes, encoding: .utf8) else { throw AppFailure.message("插件编码无效") }
             total += bytes.count; files[path] = text.replacingOccurrences(of: "\u{feff}", with: "")
         }

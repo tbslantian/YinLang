@@ -2,7 +2,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
-    @AppStorage("appearance") private var appearance = "system"
+    @AppStorage("appearance") private var appearance = "light"
+    @AppStorage("light-minute") private var lightMinute = 420
+    @AppStorage("dark-minute") private var darkMinute = 1140
     @AppStorage("home-template") private var template = "classic"
     @AppStorage("home-rotation") private var rotation = "daily"
     @AppStorage("quality") private var quality = "320k"
@@ -11,7 +13,11 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("首页与页面外观") {
-                Picker("明暗", selection: $appearance) { Text("跟随系统").tag("system"); Text("浅色杂志风").tag("light"); Text("深色播放风").tag("dark") }
+                Picker("明暗", selection: $appearance) { Text("跟随系统").tag("system"); Text("浅色杂志风").tag("light"); Text("深色播放风").tag("dark"); Text("按时间切换").tag("scheduled") }
+                if appearance == "scheduled" {
+                    DatePicker("切换浅色", selection: timeBinding($lightMinute), displayedComponents: .hourAndMinute)
+                    DatePicker("切换深色", selection: timeBinding($darkMinute), displayedComponents: .hourAndMinute)
+                }
                 Picker("首页模板", selection: $template) { Text("经典影像（默认）").tag("classic"); Text("留白画廊").tag("gallery"); Text("声波电台").tag("radio"); Text("自动轮换").tag("auto") }
                 if template == "auto" { Picker("轮换频率", selection: $rotation) { Text("每天").tag("daily"); Text("每小时").tag("hourly") } }
             }
@@ -35,6 +41,9 @@ struct SettingsView: View {
                 NavigationLink("第三方许可") { LicenseView() }
             }
         }.navigationTitle("总设置").onChange(of: musicCache) { _, value in Task { await MediaCache.shared.trim(books: false, limitMB: value) } }.onChange(of: bookCache) { _, value in Task { await MediaCache.shared.trim(books: true, limitMB: value) } }
+    }
+    private func timeBinding(_ minute: Binding<Int>) -> Binding<Date> {
+        Binding(get: { Calendar.current.startOfDay(for: Date()).addingTimeInterval(Double(minute.wrappedValue * 60)) }, set: { value in let parts = Calendar.current.dateComponents([.hour, .minute], from: value); minute.wrappedValue = (parts.hour ?? 0) * 60 + (parts.minute ?? 0) })
     }
 }
 
@@ -83,6 +92,8 @@ struct PluginSettingsView: View {
     @State private var sourceRows: [JSONObject] = []
     @State private var sourceError = ""
     @AppStorage("quality") private var quality = "320k"
+    @AppStorage("auto-source-updates") private var autoUpdates = false
+    @AppStorage("playlist-update-hours") private var updateHours = 6
     var body: some View {
         Form {
             if !books { Section("在线播放") { QualityPicker(quality: $quality); Text("播放会在所选音质失败后逐级回退；下载使用所选档位。").font(.caption).foregroundStyle(.secondary) } }
@@ -99,6 +110,15 @@ struct PluginSettingsView: View {
                     } label: { VStack(alignment: .leading, spacing: 5) { Text(plugin.name); Text((plugin.enabled ? "已启用" : "已停用") + (plugin.version.isEmpty ? "" : " · " + plugin.version)).font(.caption).foregroundStyle(.secondary) } }
                 }.onDelete { indices in let ids = indices.map { store.plugins.filter { $0.books == books }[$0].id }; ids.forEach { store.invalidate($0) }; store.plugins.removeAll { ids.contains($0.id) } }
                 if store.plugins.filter({ $0.books == books }).isEmpty { Text("尚未安装音源").foregroundStyle(.secondary) }
+            }
+            if !books {
+                Section("音源与歌单更新") {
+                    Toggle("自动检查音源更新", isOn: $autoUpdates)
+                    Button("立即检查音源更新") { Task { await store.updateSources() } }
+                    Picker("自动更新歌单", selection: $updateHours) { Text("每次打开").tag(0); Text("每 3 小时").tag(3); Text("每 6 小时").tag(6); Text("每 12 小时").tag(12); Text("每天").tag(24); Text("关闭").tag(-1) }
+                    Button("立即刷新关注的歌单") { Task { await store.refreshFollowed() } }
+                    Text("自动更新会在应用进入前台时按周期执行。").font(.caption).foregroundStyle(.secondary)
+                }
             }
             if books {
                 Section("听书源登录与设置") {

@@ -54,7 +54,7 @@ struct LibraryView: View {
     private func load() async {
         guard let nav = store.nav else { playlists = []; return }; error = ""
         do {
-            let rows = try await nav.get("getPlaylists").object("playlists").rows("playlist").map { MediaItem($0, source: "library", kind: "playlist") }
+            let rows = try await nav.get("getPlaylists").object("playlists").rows("playlist").map { store.libraryItem($0, kind: "playlist") }
             let order = UserDefaults.standard.stringArray(forKey: orderKey) ?? []
             playlists = rows.sorted { (order.firstIndex(of: $0.key) ?? Int.max) < (order.firstIndex(of: $1.key) ?? Int.max) }
         } catch { self.error = error.localizedDescription }
@@ -102,7 +102,7 @@ struct LibraryDiscoveryView: View {
             let rows: [JSONObject]
             if key == "songs" { rows = try await nav.get("getRandomSongs", [.init(name: "size", value: "12")]).object("randomSongs").rows("song") }
             else { rows = try await nav.get("getAlbumList2", [.init(name: "type", value: key), .init(name: "size", value: "12")]).object("albumList2").rows("album") }
-            sections[key] = rows.map { MediaItem($0, source: "library", kind: key == "songs" ? "song" : "album") }
+            sections[key] = rows.map { store.libraryItem($0, kind: key == "songs" ? "song" : "album") }
         } catch { failures[key] = error.localizedDescription }
     }
 }
@@ -174,7 +174,7 @@ struct LibraryListView: View {
             case "playlist": let playlist = try await nav.playlist(identifier); editable = nav.canEdit(playlist); result = playlist.rows("entry")
             default: result = []
             }
-            let items = result.map { MediaItem($0, source: "library", kind: isSongs ? "song" : "album") }
+            let items = result.map { store.libraryItem($0, kind: isSongs ? "song" : "album") }
             if next { rows += items } else { rows = items }; original = rows; offset = requested; more = ["songs", "albums"].contains(kind) && result.count == 50
         } catch { self.error = error.localizedDescription }
     }
@@ -209,7 +209,7 @@ struct AddToPlaylistView: View {
     @State private var name = ""
     var body: some View {
         List { Button("新建歌单并加入", systemImage: "plus") { create = true }; ForEach(rows) { row in Button(row.title) { Task { do { guard let nav = store.nav else { return }; let latest = try await nav.playlist(row.key); guard nav.canEdit(latest) else { throw AppFailure.message("没有修改此歌单的权限") }; _ = try await nav.get("updatePlaylist", [.init(name: "playlistId", value: row.key), .init(name: "songIdToAdd", value: item.key)]); dismiss() } catch { store.message = error.localizedDescription } } } } }
-            .navigationTitle("加入歌单").task { guard let nav = store.nav else { return }; do { rows = try await nav.get("getPlaylists").object("playlists").rows("playlist").filter { $0.string("owner").caseInsensitiveCompare(nav.user) == .orderedSame }.map { MediaItem($0, source: "library", kind: "playlist") } } catch { store.message = error.localizedDescription } }
+            .navigationTitle("加入歌单").task { guard let nav = store.nav else { return }; do { rows = try await nav.get("getPlaylists").object("playlists").rows("playlist").filter { $0.string("owner").caseInsensitiveCompare(nav.user) == .orderedSame }.map { store.libraryItem($0, kind: "playlist") } } catch { store.message = error.localizedDescription } }
             .alert("新建歌单", isPresented: $create) { TextField("名称", text: $name); Button("创建并加入") { Task { do { guard let nav = store.nav, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }; _ = try await nav.get("createPlaylist", [.init(name: "name", value: name), .init(name: "songId", value: item.key)]); dismiss() } catch { store.message = error.localizedDescription } } }; Button("取消", role: .cancel) {} }
     }
 }
