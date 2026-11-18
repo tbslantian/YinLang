@@ -19,7 +19,13 @@ jobs:
         run: |
           mkdir -p .reference
           curl --fail --location --retry 3 https://codeload.github.com/XCQ0607/lxserver/zip/refs/tags/v2.2.0 -o .reference/lxserver.zip
-          unzip -q .reference/lxserver.zip -d .reference
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('.reference/lxserver.zip') as archive:
+              for name in archive.namelist():
+                  if name.startswith(('lxserver-2.2.0/src/modules/utils/musicSdk/', 'lxserver-2.2.0/src/utils/lyricUtils/')) or name == 'lxserver-2.2.0/LICENSE':
+                      archive.extract(name, '.reference')
+          PY
           npm ci
           npm run catalog
           node ios/scripts/prepare-resources.mjs
