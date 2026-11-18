@@ -1,0 +1,17 @@
+{
+  "name": "soundshelf",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "catalog": "node scripts/build-catalog.mjs",
+    "test:book-runtime": "node --test scripts/book-runtime.test.mjs"
+  },
+  "devDependencies": {
+    "buffer": "6.0.3",
+    "crypto-browserify": "3.12.1",
+    "esbuild": "0.25.12",
+    "events": "3.3.0",
+    "process": "0.11.10",
+    "stream-browserify": "3.0.0"
+  }
+}

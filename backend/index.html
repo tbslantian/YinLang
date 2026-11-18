@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>声屿 · 下载服务</title>
+<style>
+  :root { color-scheme: light; --ink:#172c25; --muted:#55665e; --green:#00694e; --line:#dce6e0; --mint:#e2f3eb; }
+  * { box-sizing: border-box; }
+  body { background:#f6f8f6; color:var(--ink); font:15px system-ui,sans-serif; margin:0; }
+  main { margin:auto; max-width:1000px; padding:32px 20px 64px; }
+  header { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:24px; }
+  h1 { margin:.25em 0; font-size:clamp(26px,5vw,42px); letter-spacing:-.045em; }
+  h2 { margin:0 0 14px; font-size:19px; }
+  label { display:grid; gap:5px; min-width:0; color:var(--muted); }
+  p { color:var(--muted); margin:.5em 0; }
+  section { margin:0 0 14px; border:1px solid var(--line); background:white; border-radius:18px; padding:18px; }
+  form,.toolbar { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px; }
+  label.wide { flex:1 1 200px; }
+  input,select,button { font:inherit; border-radius:10px; min-height:42px; padding:8px 11px; }
+  input,select { background:#f8faf8; border:1px solid var(--line); color:var(--ink); min-width:0; }
+  button { background:var(--mint); color:var(--green); border:1px solid transparent; cursor:pointer; font-weight:650; }
+  button.primary { background:var(--green); color:white; }
+  button:disabled { opacity:.55; cursor:default; }
+  button:hover:not(:disabled) { filter:brightness(.94); }
+  .label { color:var(--green); font-size:12px; font-weight:700; }
+  .entry { padding:10px 0; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:10px; align-items:center; }
+  .entry:last-child { border:0; }
+  .entry div { overflow-wrap:anywhere; }
+  .entry small { display:block; color:var(--muted); margin-top:4px; }
+  #status { padding:10px 0; min-height:42px; color:var(--green); }
+  #next[hidden] { display:none; }
+</style>
+<main>
+  <header>
+    <div><span class="label">SOUNDSHELF</span><h1>声屿下载服务</h1></div>
+    <form id="login">
+      <label>服务令牌<input id="token" type="password" required autocomplete="current-password"></label>
+      <button type="submit">连接</button>
+    </form>
+  </header>
+  <div id="status" role="status">输入令牌后管理下载。</div>
+  <section>
+    <h2>搜索音乐</h2>
+    <form id="search">
+      <label class="wide">歌曲或歌手<input id="query" required placeholder="输入关键词" maxlength="180"></label>
+      <label>平台<select id="platform"></select></label>
+      <label>音质<select id="quality"><option value="128k">128k</option><option value="320k" selected>高音质</option><option value="flac">无损音质</option><option value="flac24bit">24bit无损</option><option value="hires">高解析度</option><option value="atmos">空间音频</option><option value="master">母带音质</option></select></label>
+      <button class="primary" type="submit">搜索</button>
+    </form>
+    <div id="results"></div>
+    <button id="next" hidden>下一页</button>
+  </section>
+  <section>
+    <h2>添加下载</h2>
+    <form id="manual">
+      <label>类型<select id="kind"><option value="music">音乐</option><option value="audiobook">有声书</option></select></label>
+      <label>名称<input id="title" required maxlength="100"></label>
+      <label>书名<input id="collection" maxlength="100"></label>
+      <label class="wide">音频地址<input id="url" type="url" required placeholder="https://"></label>
+      <button class="primary" type="submit">加入队列</button>
+    </form>
+  </section>
+  <section>
+    <h2>音乐解析源</h2>
+    <form id="sourceForm">
+      <label>名称<input id="sourceName" required maxlength="100"></label>
+      <label>平台<select id="sourcePlatform"></select></label>
+      <label class="wide">解析接口地址<input id="endpoint" type="url" required placeholder="https://"></label>
+      <button type="submit">添加解析源</button>
+    </form>
+    <div id="sources"></div>
+  </section>
+  <section>
+    <div class="toolbar"><h2 style="flex:1">下载任务</h2><button id="refresh">刷新</button></div>
+    <div id="jobs"></div>
+  </section>
+</main>
+<script>
+  const $ = id => document.getElementById(id)
+  const labels = { all:'聚合', wy:'网易云', tx:'QQ 音乐', kg:'酷狗', kw:'酷我', mg:'咪咕' }
+  const states = { queued:'排队中', downloading:'下载中', completed:'已完成', failed:'失败' }
+  let token = sessionStorage.getItem('soundshelf-token') || ''
+  $('token').value = token
+  for (const [key, label] of Object.entries(labels)) {
+    $('platform').add(new Option(label, key))
+    if (key !== 'all') $('sourcePlatform').add(new Option(label, key))
+  }
+  const status = value => { $('status').textContent = value }
+  async function api(path, body, method = body === undefined ? 'GET' : 'POST') {
+    if (!token) throw Error('请先填写服务令牌')
+    const response = await fetch(path, {
+      method, headers: { authorization:'Bearer ' + token, 'content-type':'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    const value = await response.json()
+    if (!response.ok) throw Error(value.error || '请求失败')
+    return value
+  }
+  function item(parent, title, detail, action, handler) {
+    const row = document.createElement('div')
+    row.className = 'entry'
+    const label = document.createElement('div')
+    const main = document.createElement('strong')
+    main.textContent = title
+    const caption = document.createElement('small')
+    caption.textContent = detail
+    label.append(main, caption)
+    row.append(label)
+    if (action) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.textContent = action
+      button.onclick = async () => {
+        button.disabled = true
+        try { await handler() } catch (error) { status(error.message) } finally { button.disabled = false }
+      }
+      row.append(button)
+    }
+    parent.append(row)
+  }
+  async function load() {
+    const [queue, music] = await Promise.all([api('/v1/jobs'), api('/v1/music/sources')])
+    $('jobs').replaceChildren()
+    $('sources').replaceChildren()
+    for (const job of queue.jobs) {
+      const type = job.kind === 'music' ? '音乐' : '有声书'
+      const progress = job.status === 'downloading' ? ' · ' + (job.bytes / 1048576).toFixed(1) + ' MB' : ''
+      const quality = Array.from($('quality').options).find(option => option.value === (job.quality === 'atmos_plus' ? 'atmos' : job.quality))?.textContent
+      item($('jobs'), job.title, [type, quality, states[job.status] + progress, job.error || job.file].filter(Boolean).join(' · '))
+    }
+    if (!queue.jobs.length) item($('jobs'), '暂无任务', '')
+    for (const source of music.sources) {
+      item($('sources'), source.name, labels[source.platform], '移除', async () => {
+        await api('/v1/music/sources/' + source.id, undefined, 'DELETE')
+        await load()
+      })
+    }
+  }
+  function form(id, callback) {
+    $(id).onsubmit = async event => {
+      event.preventDefault()
+      const button = event.submitter
+      if (button) button.disabled = true
+      try { await callback(event.target) } catch (error) { status(error.message) } finally { if (button) button.disabled = false }
+    }
+  }
+  form('login', async () => {
+    token = $('token').value.trim()
+    await api('/health')
+    sessionStorage.setItem('soundshelf-token', token)
+    status('已连接')
+    await load()
+  })
+  let query, platform, page
+  async function search() {
+    status('搜索中…')
+    const result = await api('/v1/music/search?' + new URLSearchParams({ q:query, source:platform, page }))
+    $('results').replaceChildren()
+    $('next').hidden = !result.more
+    for (const song of result.list) {
+      item($('results'), song.name || song.title, [song.singer, song.albumName, labels[song.source]].filter(Boolean).join(' · '), '加入下载', async () => {
+        await api('/v1/music/download', { song, quality:$('quality').value })
+        status('已加入队列')
+        await load()
+      })
+    }
+    const failed = result.failed?.map(key => labels[key]).join('、')
+    status((result.list.length ? '第 ' + page + ' 页' : '暂无搜索结果') + (failed ? ' · 暂不可用：' + failed : ''))
+  }
+  form('search', async () => {
+    query = $('query').value.trim()
+    platform = $('platform').value
+    page = 1
+    await search()
+  })
+  $('next').onclick = async () => {
+    $('next').disabled = true
+    page++
+    try { await search() } catch (error) { page--; status(error.message) } finally { $('next').disabled = false }
+  }
+  form('manual', async input => {
+    await api('/v1/jobs', { kind:$('kind').value, title:$('title').value, collection:$('collection').value, url:$('url').value })
+    status('已加入队列')
+    input.reset()
+    await load()
+  })
+  form('sourceForm', async input => {
+    await api('/v1/music/sources', { name:$('sourceName').value, platform:$('sourcePlatform').value, endpoint:$('endpoint').value })
+    status('解析源已添加')
+    input.reset()
+    await load()
+  })
+  $('refresh').onclick = () => load().catch(error => status(error.message))
+  if (token) load().then(() => status('已连接'), error => status(error.message))
+</script>
+</html>

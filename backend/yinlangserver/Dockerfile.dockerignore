@@ -1,0 +1,8 @@
+**
+!.reference/
+!.reference/lxserver.zip
+!backend/
+!backend/server.mjs
+!backend/yinlangserver/
+!backend/yinlangserver/brand.mjs
+!backend/yinlangserver/mount.mjs

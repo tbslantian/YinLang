@@ -1,0 +1,8 @@
+**
+!backend/
+!backend/Dockerfile
+!backend/server.mjs
+!backend/index.html
+!shared/
+!shared/catalog.bundle.js
+!shared/catalog-licenses.txt

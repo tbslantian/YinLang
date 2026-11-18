@@ -1,0 +1,29 @@
+name: yinlangserver
+services:
+  yinlangserver:
+    build:
+      context: ../..
+      dockerfile: backend/yinlangserver/Dockerfile
+    image: yinlangserver:2.2.0-4
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${LX_PORT:-9527}:9527"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      ENABLE_WEBPLAYER_AUTH: "true"
+      WEBPLAYER_PASSWORD: ${WEBPLAYER_PASSWORD:?Set WEBPLAYER_PASSWORD in .env}
+      DOWNLOAD_TOKEN: ${DOWNLOAD_TOKEN:-}
+      YINLANG_QUEUE_USER: ${YINLANG_QUEUE_USER:-_open}
+      PRIVATE_MEDIA_HOSTS: ${PRIVATE_MEDIA_HOSTS:-}
+      MAX_DOWNLOAD_BYTES: ${MAX_DOWNLOAD_BYTES:-2147483648}
+    volumes:
+      - "${LX_DATA_DIR:-./data}:/server/data"
+      - "${LX_CACHE_DIR:-./cache}:/server/cache"
+      - "${LX_MUSIC_DIR:-./music}:/server/music"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9527/js/config.js').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 20s
+      timeout: 4s
+      retries: 3
+      start_period: 30s

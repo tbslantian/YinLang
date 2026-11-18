@@ -1,0 +1,70 @@
+name: iOS universal unsigned build
+on:
+  push:
+    paths: ['ios/**', 'shared/**', 'scripts/build-catalog.mjs', 'package*.json', '.github/workflows/ios.yml', 'app/src/main/res/drawable-nodpi/**', 'app/src/main/assets/book-sources/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Prepare shared music catalog and original artwork
+        run: |
+          mkdir -p .reference
+          curl --fail --location --retry 3 https://codeload.github.com/XCQ0607/lxserver/zip/refs/tags/v2.2.0 -o .reference/lxserver.zip
+          unzip -q .reference/lxserver.zip -d .reference
+          npm ci
+          npm run catalog
+          node ios/scripts/prepare-resources.mjs
+          python3 ios/scripts/generate-project.py
+      - name: Compile universal iPhone and iPad device archive
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Release -destination 'generic/platform=iOS' -archivePath "$PWD/ios/build/YinLang.xcarchive" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO archive | tee ios-device-build.log
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p ios/build/package/Payload
+          cp -R ios/build/YinLang.xcarchive/Products/Applications/YinLang.app ios/build/package/Payload/
+          cd ios/build/package
+          /usr/bin/zip -qry ../YinLang-0.8.0-unsigned.ipa Payload
+          cd ..
+          shasum -a 256 YinLang-0.8.0-unsigned.ipa > SHA256SUMS.txt
+      - name: Select available phone and tablet simulators
+        run: |
+          python3 - <<'PY'
+          import json, subprocess, os
+          devices = json.loads(subprocess.check_output(['xcrun','simctl','list','devices','available','-j']))['devices']
+          rows = [d for runtime, values in devices.items() if 'iOS' in runtime for d in values if d.get('isAvailable')]
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+              for kind, prefix in [('PHONE','iPhone'),('TABLET','iPad')]:
+                  device = next(d for d in rows if d['name'].startswith(prefix))
+                  f.write(f"{kind}_ID={device['udid']}\n")
+                  print(kind, device['name'], device['udid'])
+          PY
+      - name: Test on iPhone
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$PHONE_ID" -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPhone.xcresult CODE_SIGNING_ALLOWED=NO test | tee ios-iphone-test.log
+      - name: Test on iPad
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$TABLET_ID" -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPad.xcresult -only-testing:YinLangUITests CODE_SIGNING_ALLOWED=NO test | tee ios-ipad-test.log
+      - name: Upload unsigned IPA, archive and test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: YinLang-iOS-unsigned
+          retention-days: 30
+          path: |
+            ios/build/*.ipa
+            ios/build/SHA256SUMS.txt
+            ios/build/*.xcarchive
+            ios/build/*.xcresult
+            ios-*.log

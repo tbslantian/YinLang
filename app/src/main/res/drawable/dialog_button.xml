@@ -1,0 +1,10 @@
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:insetLeft="3dp" android:insetTop="3dp" android:insetRight="3dp" android:insetBottom="3dp">
+    <ripple android:color="#22AD2351">
+        <item>
+            <shape>
+                <gradient android:angle="315" android:startColor="#FFFFFF" android:endColor="@color/ui_soft"/>
+                <corners android:radius="24dp"/>
+            </shape>
+        </item>
+    </ripple>
+</inset>

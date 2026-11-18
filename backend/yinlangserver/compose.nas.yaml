@@ -1,0 +1,25 @@
+services:
+  lxserver:
+    image: ${YINLANGSERVER_IMAGE:-tbslantian/yinlangserver:2.2.0-4}
+    container_name: yinlangserver
+    init: true
+    restart: unless-stopped
+    ports:
+      - "9528:9527"
+    volumes:
+      - "${YINLANGSERVER_STORAGE_DIR:-/volume2/docker/yinlangserver}/data:/server/data"
+      - "${YINLANGSERVER_STORAGE_DIR:-/volume2/docker/yinlangserver}/logs:/server/logs"
+      - "${YINLANGSERVER_STORAGE_DIR:-/volume2/docker/yinlangserver}/cache:/server/cache"
+      - /volume2/HDD2/download:/server/music
+    environment:
+      PORT: "9527"
+      BIND_IP: "0.0.0.0"
+      LOG_PATH: /server/logs
+      DOWNLOAD_TOKEN: ${DOWNLOAD_TOKEN:-}
+      YINLANG_QUEUE_USER: ${YINLANG_QUEUE_USER:-_open}
+      PRIVATE_MEDIA_HOSTS: ${PRIVATE_MEDIA_HOSTS:-}
+      MAX_DOWNLOAD_BYTES: ${MAX_DOWNLOAD_BYTES:-2147483648}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ENABLE_WEBPLAYER_AUTH: ${ENABLE_WEBPLAYER_AUTH:-}
+      WEBPLAYER_PASSWORD: ${WEBPLAYER_PASSWORD:-}
+      LX_USER_admin: ${LX_SYNC_ADMIN_PASSWORD:-}

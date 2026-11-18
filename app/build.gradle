@@ -1,0 +1,52 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'app.soundshelf'
+    compileSdk 36
+    ndkVersion '27.2.12479018'
+    defaultConfig {
+        applicationId 'app.soundshelf'
+        minSdk 30
+        targetSdk 36
+        versionCode 36
+        versionName '0.8.0'
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86' }
+        externalNativeBuild {
+            cmake { arguments '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON' }
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+    if (providers.gradleProperty('yinlangDebugKeystore').isPresent()) {
+        signingConfigs.debug.storeFile = file(providers.gradleProperty('yinlangDebugKeystore').get())
+    }
+    sourceSets.main.assets.srcDir(layout.buildDirectory.dir('generated/assets/soundshelf'))
+}
+
+dependencies {
+    implementation 'androidx.media3:media3-exoplayer:1.9.3'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.9.3'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+}
+
+tasks.register('copySourceRuntime', Copy) {
+    from rootProject.file('shared')
+    include 'plugin-host.js', 'catalog.bundle.js', 'catalog-licenses.txt'
+    into layout.buildDirectory.dir('generated/assets/soundshelf')
+    doFirst {
+        if (!rootProject.file('shared/catalog.bundle.js').isFile()) {
+            throw new GradleException('Run npm ci and npm run catalog before building the Android app.')
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn 'copySourceRuntime' }

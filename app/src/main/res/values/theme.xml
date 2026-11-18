@@ -1,0 +1,56 @@
+<resources>
+    <color name="ui_ink">#251B18</color>
+    <color name="ui_muted">#66564E</color>
+    <color name="ui_background">#F7F1EA</color>
+    <color name="ui_accent">#A9432F</color>
+    <color name="ui_soft">#EDE3DA</color>
+
+    <style name="Theme.YinLang" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:windowBackground">@color/ui_background</item>
+        <item name="android:colorAccent">@color/ui_accent</item>
+        <item name="android:colorControlNormal">@color/ui_muted</item>
+        <item name="android:alertDialogTheme">@style/Theme.YinLang.Alert</item>
+    </style>
+
+    <style name="Theme.YinLang.Alert" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:windowBackground">@drawable/dialog_surface</item>
+        <item name="android:backgroundDimAmount">0.44</item>
+        <item name="android:colorAccent">@color/ui_accent</item>
+        <item name="android:colorControlNormal">@color/ui_muted</item>
+        <item name="android:textColorPrimary">@color/ui_ink</item>
+        <item name="android:textColorSecondary">@color/ui_muted</item>
+        <item name="android:buttonBarPositiveButtonStyle">@style/Widget.YinLang.AlertButton.Primary</item>
+        <item name="android:buttonBarNegativeButtonStyle">@style/Widget.YinLang.AlertButton</item>
+        <item name="android:buttonBarNeutralButtonStyle">@style/Widget.YinLang.AlertButton</item>
+    </style>
+
+    <style name="Widget.YinLang.AlertButton" parent="android:style/Widget.Material.Light.Button.Borderless">
+        <item name="android:background">@drawable/dialog_button</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:minWidth">64dp</item>
+        <item name="android:paddingStart">15dp</item>
+        <item name="android:paddingEnd">15dp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textColor">@color/ui_accent</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <style name="Widget.YinLang.AlertButton.Primary">
+        <item name="android:background">@drawable/dialog_button_primary</item>
+        <item name="android:textColor">@android:color/white</item>
+    </style>
+
+    <style name="Theme.YinLang.Alert.Dark" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:windowBackground">@drawable/dialog_surface_dark</item>
+        <item name="android:backgroundDimAmount">0.5</item>
+        <item name="android:colorAccent">#A4E7D7</item>
+        <item name="android:colorControlNormal">#B7BAC6</item>
+        <item name="android:textColorPrimary">#F6F4F2</item>
+        <item name="android:textColorSecondary">#B7BAC6</item>
+    </style>
+</resources>
