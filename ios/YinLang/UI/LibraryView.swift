@@ -125,11 +125,29 @@ private struct DiscoveryAlbumRow: View {
     var item: MediaItem
     var rank: Int
     @State private var loading = false
+    private var detail: String {
+        var result = item.subtitle
+        let count = item.raw.string("songCount"), plays = item.raw.string("playCount")
+        if !count.isEmpty { result += " · " + count + " 首" }
+        if !plays.isEmpty { result += " · 播放 " + plays + " 次" }
+        return result
+    }
+    private var labels: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(rank)  " + item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1)
+            Text(detail).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(2)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
     var body: some View {
         HStack(spacing: 0) {
-            NavigationLink { LibraryListView(kind: "album", identifier: item.key, title: item.title) } label: { HStack(spacing: 11) { Artwork(item: item, size: 50); VStack(alignment: .leading, spacing: 4) { Text("\(rank)  " + item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1); Text(item.subtitle + (item.raw.string("songCount").isEmpty ? "" : " · " + item.raw.string("songCount") + " 首") + (item.raw.string("playCount").isEmpty ? "" : " · 播放 " + item.raw.string("playCount") + " 次")).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(2) }.frame(maxWidth: .infinity, alignment: .leading) } }
-            Button { Task { guard let nav = store.nav else { return }; loading = true; defer { loading = false }; do { let songs = try await nav.get("getAlbum", [.init(name: "id", value: item.key)]).object("album").rows("song"); player.play(songs.map { store.libraryItem($0) }) } catch { store.message = error.localizedDescription } } } label: { YLIcon(systemName: "play.fill", size: 18).foregroundStyle(Palette.accent).frame(width: 44, height: 44) }.disabled(loading).accessibilityLabel("播放专辑 " + item.title)
+            NavigationLink { LibraryListView(kind: "album", identifier: item.key, title: item.title) } label: { HStack(spacing: 11) { Artwork(item: item, size: 50); labels } }
+            Button { Task { await playAlbum() } } label: { YLIcon(systemName: "play.fill", size: 18).foregroundStyle(Palette.accent).frame(width: 44, height: 44) }.disabled(loading).accessibilityLabel("播放专辑 " + item.title)
         }.padding(.vertical, 9).buttonStyle(.plain)
+    }
+    private func playAlbum() async {
+        guard let nav = store.nav else { return }; loading = true; defer { loading = false }
+        do { let result = try await nav.get("getAlbum", [.init(name: "id", value: item.key)]); let songs = result.object("album").rows("song"); player.play(songs.map { store.libraryItem($0) }) }
+        catch { store.message = error.localizedDescription }
     }
 }
 
