@@ -30,20 +30,20 @@ struct PlayerMenuView: View {
                             NavigationLink { SongDetailsView(item: item) } label: { row("info.circle", "查看", "歌曲详情、专辑与艺术家") }
                         }
                         if let item = current, !book, item.source != "offline" {
-                            Button { Task { await store.download(item) }; dismiss() } label: { row("arrow.down.circle", "下载到手机") }
+                            Button { Task { await store.download(item) }; dismiss() } label: { row("arrow.down.circle", "下载到手机") }.accessibilityIdentifier("player-menu-download")
                             if item.source != "library" {
                                 if UserDefaults.standard.bool(forKey: "server-enabled"), !(UserDefaults.standard.string(forKey: "server-url") ?? "").isEmpty {
-                                    Button { Task { await store.push(item) }; dismiss() } label: { row("server.rack", "推送到服务端下载") }
-                                } else { NavigationLink { SettingsView() } label: { row("server.rack", "推送到服务端下载", "未配置") } }
+                                    Button { Task { await store.push(item) }; dismiss() } label: { row("server.rack", "推送到服务端下载") }.accessibilityIdentifier("player-menu-push")
+                                } else { NavigationLink { SettingsView() } label: { row("server.rack", "推送到服务端下载", "未配置") }.accessibilityIdentifier("player-menu-push") }
                             }
                         }
-                        Button { destination = .cast } label: { row("airplayaudio", "投送", player.dlna.current?.name ?? "") }
+                        Button { destination = .cast } label: { row("airplayaudio", "投送", player.dlna.current?.name ?? "") }.accessibilityIdentifier("player-menu-cast")
                         if !book {
-                            Button { destination = .style } label: { row("opticaldisc", "播放器样式", vinyl ? "旋转黑胶" : "方形封面") }
-                            Button { if online { destination = .quality } } label: { row("music.note", "音质", online ? QualityPicker.options.first { $0.0 == quality }?.1 ?? quality : "原始音质", chevron: online) }.disabled(!online)
-                            Button { destination = .effects } label: { row("slider.horizontal.3", "音效", AudioEffects.shared.config.enabled ? "已开启" : "原声") }
+                            Button { destination = .style } label: { row("opticaldisc", "播放器样式", vinyl ? "旋转黑胶" : "方形封面") }.accessibilityIdentifier("player-menu-style")
+                            Button { if online { destination = .quality } } label: { row("music.note", "音质", online ? QualityPicker.options.first { $0.0 == quality }?.1 ?? quality : "原始音质", chevron: online) }.disabled(!online).accessibilityIdentifier("player-menu-quality")
+                            Button { destination = .effects } label: { row("slider.horizontal.3", "音效", AudioEffects.shared.config.enabled ? "已开启" : "原声") }.accessibilityIdentifier("player-menu-effects")
                         }
-                        Button { destination = .settings } label: { row("gearshape", "播放设置") }
+                        Button { destination = .settings } label: { row("gearshape", "播放设置") }.accessibilityIdentifier("player-menu-settings")
                         HStack(spacing: 7) {
                             YLIcon(systemName: "speaker.wave.3", size: 20).foregroundStyle(Palette.accent).frame(width: 31)
                             Text("调节音量").font(.system(size: 15, weight: .bold))
@@ -87,7 +87,7 @@ struct PlayerMenuView: View {
                 YLIcon(systemName: icon, size: 22).foregroundStyle(Palette.accent).frame(height: 28)
                 Text(title).font(.system(size: 12, weight: .bold)).lineLimit(2).multilineTextAlignment(.center)
             }.padding(.horizontal, 2).padding(.top, 10).padding(.bottom, 9).frame(maxWidth: .infinity, minHeight: 71).androidSurface()
-        }.accessibilityLabel(title)
+        }.accessibilityLabel(title).accessibilityIdentifier("player-menu-action-" + title)
     }
     private func row(_ icon: String, _ title: String, _ value: String = "", chevron: Bool = true) -> some View {
         HStack(spacing: 8) {

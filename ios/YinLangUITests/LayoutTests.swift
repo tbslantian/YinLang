@@ -111,8 +111,8 @@ final class LayoutTests: XCTestCase {
         let positioned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             artwork.frame.maxX <= lyrics.frame.minX && lyrics.frame.maxY <= controls.frame.minY + 1 && lyrics.frame.height > 32
         }, object: app)
-        XCTAssertEqual(XCTWaiter.wait(for: [positioned], timeout: 5), .completed)
-        XCTAssertTrue(app.buttons["下一首"].isHittable)
+        XCTAssertEqual(XCTWaiter.wait(for: [positioned], timeout: 5), .completed, app.debugDescription)
+        XCTAssertTrue(app.buttons["player-next"].firstMatch.isHittable, app.debugDescription)
         if app.buttons["显示旋转唱片"].exists { app.buttons["显示旋转唱片"].tap() }
         XCTAssertTrue(app.buttons["显示封面"].waitForExistence(timeout: 5))
         capture("player-landscape-vinyl-lyrics")
@@ -252,6 +252,8 @@ final class LayoutTests: XCTestCase {
         start.press(forDuration: 0.5, thenDragTo: bottom, withVelocity: .slow, thenHoldForDuration: 1.0)
         let audit = app.descendants(matching: .any).matching(identifier: "library-reorder-audit").firstMatch
         XCTAssertTrue(audit.waitForExistence(timeout: 5))
+        let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in (audit.value as? String ?? "").split(separator: ",").count == 5 }, object: audit)
+        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 5), .completed, app.debugDescription)
         let values = (audit.value as? String ?? "").split(separator: ",").compactMap { Double($0) }
         XCTAssertEqual(values.count, 5)
         if values.count == 5 {
@@ -297,29 +299,30 @@ final class LayoutTests: XCTestCase {
         let close = app.buttons["关闭播放器菜单"].firstMatch
         XCTAssertTrue(close.waitForExistence(timeout: 8))
         let actionNames = ["播放模式", "播放速度", "播放队列", "定时关闭"]
-        let first = app.buttons[actionNames[0]].firstMatch
-        for name in actionNames { XCTAssertEqual(app.buttons[name].firstMatch.frame.minY, first.frame.minY, accuracy: 1) }
-        let rows = ["下载到手机", "推送到服务端下载", "投送", "播放器样式", "音质", "音效", "播放设置"]
+        let first = app.buttons["player-menu-action-" + actionNames[0]].firstMatch
+        for name in actionNames { XCTAssertEqual(app.buttons["player-menu-action-" + name].firstMatch.frame.minY, first.frame.minY, accuracy: 1) }
+        let rows = ["download", "push", "cast", "style", "quality", "effects", "settings"]
         var lastY = first.frame.maxY
         for name in rows {
-            let button = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+            let button = app.buttons["player-menu-" + name].firstMatch
             XCTAssertTrue(button.exists, name)
             XCTAssertGreaterThanOrEqual(button.frame.minY, lastY - 1, name); lastY = button.frame.maxY
         }
         capture("player-menu-android-order")
         close.tap()
-        XCTAssertFalse(close.exists)
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: close)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed)
     }
     @MainActor func testMusicPreparationSwitchDefaultsAndPersistence() throws {
         var app = launch("plugins", extraArguments: ["-ui-reset-next-settings"])
-        let parse = app.buttons["music-preparse-next"].firstMatch, cache = app.buttons["music-precache-next"].firstMatch
+        let parse = app.switches["music-preparse-next"].firstMatch, cache = app.switches["music-precache-next"].firstMatch
         XCTAssertTrue(parse.waitForExistence(timeout: 8)); XCTAssertTrue(cache.exists)
-        XCTAssertEqual(parse.value as? String, "已启用"); XCTAssertEqual(cache.value as? String, "已停用")
+        XCTAssertEqual(parse.value as? String, "1"); XCTAssertEqual(cache.value as? String, "0")
         parse.tap(); cache.tap(); app.terminate()
         app = launch("plugins")
-        let restoredParse = app.buttons["music-preparse-next"].firstMatch, restoredCache = app.buttons["music-precache-next"].firstMatch
+        let restoredParse = app.switches["music-preparse-next"].firstMatch, restoredCache = app.switches["music-precache-next"].firstMatch
         XCTAssertTrue(restoredParse.waitForExistence(timeout: 8))
-        XCTAssertEqual(restoredParse.value as? String, "已停用"); XCTAssertEqual(restoredCache.value as? String, "已启用")
+        XCTAssertEqual(restoredParse.value as? String, "0"); XCTAssertEqual(restoredCache.value as? String, "1")
         capture("music-preparation-settings")
         restoredParse.tap(); restoredCache.tap()
     }

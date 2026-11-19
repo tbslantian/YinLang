@@ -69,6 +69,9 @@ private struct LibraryPlaylistRows: View {
     var save: () -> Void
     @State private var frames: [String: CGRect] = [:]
     @State private var dragging: String?
+#if DEBUG
+    @State private var reorderAudit = "idle"
+#endif
     var body: some View {
         VStack(spacing: 16) {
             ForEach(items) { item in
@@ -81,8 +84,17 @@ private struct LibraryPlaylistRows: View {
                 PlaylistReorderGesture(keys: items.map(\.key), frames: frames, begin: { dragging = $0 }, move: { key, index in
                     guard let from = items.firstIndex(where: { $0.key == key }), from != index, items.indices.contains(index) else { return }
                     withAnimation(.easeInOut(duration: 0.16)) { items.move(fromOffsets: IndexSet(integer: from), toOffset: index > from ? index + 1 : index) }
-                }, end: { dragging = nil; save() })
+                }, end: { dragging = nil; save() }, report: { value in
+#if DEBUG
+                    reorderAudit = value
+#endif
+                })
             }
+#if DEBUG
+            .overlay(alignment: .topLeading) {
+                if UITestFixtures.active { Text(" ").font(.system(size: 1)).accessibilityLabel("拖动检查").accessibilityValue(reorderAudit).accessibilityIdentifier("library-reorder-audit").allowsHitTesting(false) }
+            }
+#endif
     }
 }
 

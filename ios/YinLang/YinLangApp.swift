@@ -53,7 +53,7 @@ struct RootView: View {
                 .overlay(alignment: .bottom) { ResolutionNoticeView() }
             // Reserve real layout space outside the navigation stack, including
             // pushed pages and changes to loading / one- or two-line lyrics.
-            if player.current != nil { MiniPlayer().fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("mini-player") }
+            if player.current != nil { MiniPlayer().fixedSize(horizontal: false, vertical: true).accessibilityElement(children: .contain).accessibilityIdentifier("mini-player") }
         }.background { AndroidBackground() }
         .fullScreenCover(isPresented: $player.showPlayer) { PlayerView().environmentObject(store).environmentObject(player) }
         .sheet(isPresented: Binding(get: { player.showQueue && !player.showPlayer }, set: { player.showQueue = $0 })) { QueueView().environmentObject(store).environmentObject(player) }

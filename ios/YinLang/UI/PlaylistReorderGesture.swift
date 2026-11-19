@@ -10,6 +10,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
     var begin: (String) -> Void
     var move: (String, Int) -> Void
     var end: () -> Void
+    var report: (String) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> Anchor {
         let view = Anchor(); view.isUserInteractionEnabled = false
@@ -24,7 +25,9 @@ struct PlaylistReorderGesture: UIViewRepresentable {
 
     final class Anchor: UIView {
         var attach: ((Anchor) -> Void)?
-        override func didMoveToWindow() { super.didMoveToWindow(); if window != nil { attach?(self) } }
+        override func didMoveToWindow() { super.didMoveToWindow(); scheduleAttach() }
+        override func didMoveToSuperview() { super.didMoveToSuperview(); scheduleAttach() }
+        private func scheduleAttach() { DispatchQueue.main.async { [weak self] in if let self, self.window != nil { self.attach?(self) } } }
     }
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var parent: PlaylistReorderGesture
@@ -52,24 +55,32 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             anchor = view
             var ancestor = view.superview
             while let current = ancestor, !(current is UIScrollView) { ancestor = current.superview }
-            guard let found = ancestor as? UIScrollView, found !== scroll else { return }
+            guard let found = ancestor as? UIScrollView, found !== scroll, let window = view.window else { return }
             detach(); anchor = view; scroll = found
             let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handle(_:)))
             recognizer.minimumPressDuration = 0.32; recognizer.allowableMovement = 9
             recognizer.cancelsTouchesInView = true; recognizer.delegate = self
-            found.addGestureRecognizer(recognizer); gesture = recognizer
+            window.addGestureRecognizer(recognizer); gesture = recognizer
+#if DEBUG
+            if UITestFixtures.active { print("Playlist reorder attached: \(type(of: found)), anchor \(view.bounds)") }
+#endif
         }
         func detach() {
             displayLink?.invalidate(); displayLink = nil
             scroll?.panGestureRecognizer.isEnabled = true
-            if let gesture { scroll?.removeGestureRecognizer(gesture) }
+            if let gesture { gesture.view?.removeGestureRecognizer(gesture) }
             lifted?.layer.removeAllAnimations(); lifted?.removeFromSuperview(); lifted = nil
             gesture = nil; scroll = nil; key = nil; settling = false
         }
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
             guard !settling, let anchor, parent.keys.count > 1 else { return false }
             let point = gestureRecognizer.location(in: anchor)
-            return parent.frames.values.contains { $0.contains(point) }
+            let insideScroll = scroll.map { $0.bounds.contains(gestureRecognizer.location(in: $0)) } ?? false
+            let begins = insideScroll && parent.frames.values.contains { $0.contains(point) }
+#if DEBUG
+            if UITestFixtures.active { print("Playlist reorder should begin: \(begins), touch \(point), frames \(parent.frames.count)") }
+#endif
+            return begins
         }
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
             other === scroll?.panGestureRecognizer
@@ -79,6 +90,9 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             finger = recognizer.location(in: window)
             switch recognizer.state {
             case .began:
+#if DEBUG
+                if UITestFixtures.active { print("Playlist reorder began") }
+#endif
                 let point = recognizer.location(in: anchor)
                 guard let selected = parent.keys.first(where: { parent.frames[$0]?.contains(point) == true }),
                       let rect = parent.frames[selected],
@@ -152,8 +166,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             key = nil
 #if DEBUG
             if UITestFixtures.active {
-                anchor.isAccessibilityElement = true; anchor.accessibilityIdentifier = "library-reorder-audit"
-                anchor.accessibilityValue = "\(originalSize.width),\(originalSize.height),\(maximumSizeError),\(moveCount),\(scrollDistance)"
+                parent.report("\(originalSize.width),\(originalSize.height),\(maximumSizeError),\(moveCount),\(scrollDistance)")
             }
 #endif
             let destination = slots.indices.contains(target) ? anchor.convert(slots[target], to: window) : lifted.frame

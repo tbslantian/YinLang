@@ -11,7 +11,7 @@ struct MiniPlayer: View {
         if let item = player.current {
             VStack(spacing: 5) {
                 HStack(spacing: 6) {
-                    Button { player.toggle() } label: { Artwork(item: item, size: 48).overlay { Color.black.opacity(0.4); YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: 24).foregroundStyle(.white) }.clipShape(RoundedRectangle(cornerRadius: 11)) }.buttonStyle(.plain).accessibilityLabel(player.playing ? "暂停" : "播放").accessibilityIdentifier("mini-play-pause").onLongPressGesture { player.showPlayer = true }
+                    Button { player.toggle() } label: { Artwork(item: item, size: 48).overlay { Color.black.opacity(0.4); YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: 24).foregroundStyle(.white) }.clipShape(RoundedRectangle(cornerRadius: 11)).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityLabel(player.playing ? "暂停" : "播放").accessibilityIdentifier("mini-play-pause").onLongPressGesture { player.showPlayer = true }
                     Button { player.showPlayer = true } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1)
@@ -23,9 +23,9 @@ struct MiniPlayer: View {
                         }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityIdentifier("mini-open-player")
                     HStack(spacing: 0) {
-                        Button { player.previous() } label: { YLIcon(systemName: "backward.end.fill", size: 21).frame(width: 44, height: 48) }.accessibilityLabel("上一首").accessibilityIdentifier("mini-previous")
-                        Button { player.next() } label: { YLIcon(systemName: "forward.end.fill", size: 21).frame(width: 44, height: 48) }.accessibilityLabel("下一首").accessibilityIdentifier("mini-next")
-                        Button { player.showQueue = true } label: { YLIcon(systemName: "list.bullet", size: 21).frame(width: 44, height: 48) }.accessibilityLabel("播放队列").accessibilityIdentifier("mini-queue")
+                        Button { player.previous() } label: { YLIcon(systemName: "backward.end.fill", size: 21).frame(width: 44, height: 48).contentShape(Rectangle()) }.accessibilityLabel("上一首").accessibilityIdentifier("mini-previous")
+                        Button { player.next() } label: { YLIcon(systemName: "forward.end.fill", size: 21).frame(width: 44, height: 48).contentShape(Rectangle()) }.accessibilityLabel("下一首").accessibilityIdentifier("mini-next")
+                        Button { player.showQueue = true } label: { YLIcon(systemName: "list.bullet", size: 21).frame(width: 44, height: 48).contentShape(Rectangle()) }.accessibilityLabel("播放队列").accessibilityIdentifier("mini-queue")
                     }.buttonStyle(.plain).foregroundStyle(Palette.accent)
                 }.padding(.horizontal, 8).padding(.vertical, 6).background(Palette.paper.opacity(0.95), in: RoundedRectangle(cornerRadius: 30)).overlay { RoundedRectangle(cornerRadius: 30).stroke(.white.opacity(0.25), lineWidth: 1) }.shadow(color: .black.opacity(0.1), radius: 6, y: 2)
             }.padding(.horizontal, 14).padding(.bottom, 10).padding(.top, 5)
@@ -151,7 +151,7 @@ struct PlayerView: View {
             GeometryReader { controls in
                 Button { player.previous() } label: { YLIcon(systemName: "backward.end.fill", size: tight ? 24 : compact ? 28 : 33).frame(width: tight ? 44 : compact ? 50 : 62, height: tight ? 44 : compact ? 50 : 62) }.accessibilityLabel("上一首").accessibilityIdentifier("player-previous").position(x: controls.size.width * 0.25, y: controls.size.height / 2)
                 Button { player.toggle() } label: { Group { if player.loading { ProgressView().tint(ink) } else { YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: tight ? 30 : compact ? 36 : 44) } }.frame(width: tight ? 44 : compact ? 57 : 70, height: tight ? 44 : compact ? 57 : 70) }.accessibilityLabel(player.playing ? "暂停" : "播放").position(x: controls.size.width / 2, y: controls.size.height / 2)
-                Button { player.next() } label: { YLIcon(systemName: "forward.end.fill", size: tight ? 24 : compact ? 28 : 33).frame(width: tight ? 44 : compact ? 50 : 62, height: tight ? 44 : compact ? 50 : 62) }.accessibilityLabel("下一首").accessibilityIdentifier("player-next").position(x: controls.size.width * 0.75, y: controls.size.height / 2)
+                Button { player.next() } label: { YLIcon(systemName: "forward.end.fill", size: tight ? 24 : compact ? 28 : 33).frame(width: tight ? 44 : compact ? 50 : 62, height: tight ? 44 : compact ? 50 : 62).contentShape(Rectangle()) }.accessibilityLabel("下一首").accessibilityIdentifier("player-next").position(x: controls.size.width * 0.75, y: controls.size.height / 2)
             }.frame(height: tight ? 44 : compact ? 57 : 70)
             if !compact { SystemVolume().tint(accent).frame(height: 28).padding(.horizontal, 10) }
             HStack(spacing: 0) {

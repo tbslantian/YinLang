@@ -8,9 +8,9 @@ on:
         description: Simulator tests to run (device IPA is always built)
         type: choice
         default: all
-        options: [all, iphone, ipad]
+        options: [all, iphone, ipad, none]
       test_filter:
-        description: Optional XCTest identifier for a focused regression retry
+        description: Optional comma-separated XCTest identifiers for focused regression
         type: string
         default: ''
 permissions:
@@ -69,7 +69,17 @@ jobs:
           result = dict(commit=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'], version=info['CFBundleShortVersionString'], build=info['CFBundleVersion'], name=info['CFBundleDisplayName'], devices=info['UIDeviceFamily'], minimumOS=info['MinimumOSVersion'], unsigned=True, sha256=hashlib.sha256(ipa.read_bytes()).hexdigest(), bytes=ipa.stat().st_size)
           Path('build-verification.json').write_text(json.dumps(result, indent=2) + '\n')
           PY
+      - name: Upload installable package before simulator tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: YinLang-iOS-IPA
+          retention-days: 30
+          path: |
+            ios/build/*.ipa
+            ios/build/SHA256SUMS.txt
+            ios/build/build-verification.json
       - name: Select available phone and tablet simulators
+        if: ${{ inputs.test_device != 'none' }}
         run: |
           python3 - <<'PY'
           import json, subprocess, os
@@ -82,33 +92,40 @@ jobs:
                   print(kind, device['name'], device['udid'])
           PY
       - name: Test on iPhone
-        if: ${{ inputs.test_device != 'ipad' }}
+        if: ${{ inputs.test_device != 'ipad' && inputs.test_device != 'none' }}
         run: |
           set -o pipefail
           xcrun simctl boot "$PHONE_ID" || true
           xcrun simctl bootstatus "$PHONE_ID" -b
           selection=()
-          if [ -n "$SIMULATOR_TEST_FILTER" ]; then selection=("-only-testing:$SIMULATOR_TEST_FILTER"); fi
+          if [ -n "$SIMULATOR_TEST_FILTER" ]; then
+            IFS=',' read -ra filters <<< "$SIMULATOR_TEST_FILTER"
+            for filter in "${filters[@]}"; do selection+=("-only-testing:$filter"); done
+          fi
           xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$PHONE_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPhone.xcresult "${selection[@]}" CODE_SIGNING_ALLOWED=NO test | tee ios-iphone-test.log
       - name: Upload iPhone test log
-        if: ${{ !cancelled() && steps.archive.outcome == 'success' && inputs.test_device != 'ipad' }}
+        if: ${{ !cancelled() && steps.archive.outcome == 'success' && inputs.test_device != 'ipad' && inputs.test_device != 'none' }}
         uses: actions/upload-artifact@v4
         with:
           name: YinLang-iOS-iPhone-test-log
           retention-days: 30
           path: ios-iphone-test.log
       - name: Test on iPad
-        if: ${{ !cancelled() && steps.archive.outcome == 'success' && inputs.test_device != 'iphone' }}
+        if: ${{ !cancelled() && steps.archive.outcome == 'success' && inputs.test_device != 'iphone' && inputs.test_device != 'none' }}
         run: |
           set -o pipefail
           xcrun simctl shutdown "$PHONE_ID" || true
           xcrun simctl boot "$TABLET_ID" || true
           xcrun simctl bootstatus "$TABLET_ID" -b
           selection=(-only-testing:YinLangUITests -only-testing:YinLangTests/PlaybackTests)
-          if [ -n "$SIMULATOR_TEST_FILTER" ]; then selection=("-only-testing:$SIMULATOR_TEST_FILTER"); fi
+          if [ -n "$SIMULATOR_TEST_FILTER" ]; then
+            selection=()
+            IFS=',' read -ra filters <<< "$SIMULATOR_TEST_FILTER"
+            for filter in "${filters[@]}"; do selection+=("-only-testing:$filter"); done
+          fi
           xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$TABLET_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPad.xcresult "${selection[@]}" CODE_SIGNING_ALLOWED=NO test | tee ios-ipad-test.log
       - name: Upload iPad test log
-        if: ${{ !cancelled() && steps.archive.outcome == 'success' && inputs.test_device != 'iphone' }}
+        if: ${{ !cancelled() && steps.archive.outcome == 'success' && inputs.test_device != 'iphone' && inputs.test_device != 'none' }}
         uses: actions/upload-artifact@v4
         with:
           name: YinLang-iOS-iPad-test-log
