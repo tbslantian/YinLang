@@ -33,6 +33,8 @@ jobs:
       - name: Compile universal iPhone and iPad device archive
         run: |
           set -o pipefail
+          cc -std=c11 -D_DARWIN_C_SOURCE ios/YinLang/Playback/AudioDSP.c ios/tests/audio-dsp-test.c -o /tmp/yinlang-dsp-test -lm
+          /tmp/yinlang-dsp-test
           xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Release -destination 'generic/platform=iOS' -archivePath "$PWD/ios/build/YinLang.xcarchive" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO archive | tee ios-device-build.log
       - name: Package unsigned IPA
         run: |

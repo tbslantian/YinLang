@@ -24,6 +24,13 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(nav.canEdit(["owner":"Alice", "readonly":true]))
         XCTAssertTrue(nav.canEdit(["owner":"Other", "readonly":false]))
     }
+    func testCrossPlatformMatchingRejectsDifferentRecordings() {
+        let wanted = MediaItem(["id":"a", "title":"晴天", "artist":"周杰伦", "duration":269])
+        XCTAssertTrue(SongMatch.same(wanted, MediaItem(["id":"b", "title":"晴天", "artist":"周杰伦 / 合作者", "interval":"04:29"])))
+        XCTAssertFalse(SongMatch.same(wanted, MediaItem(["id":"c", "title":"晴天 (Live)", "artist":"周杰伦", "duration":269])))
+        XCTAssertFalse(SongMatch.same(wanted, MediaItem(["id":"d", "title":"晴天", "artist":"其他歌手", "duration":269])))
+        XCTAssertFalse(SongMatch.same(wanted, MediaItem(["id":"e", "title":"晴天", "artist":"周杰伦", "duration":40])))
+    }
     func testNavidromeAuthenticationEscaping() throws {
         let nav = Navidrome(base: "https://example.com/music/rest", user: "a+b&x", password: "secret")
         let parts = try XCTUnwrap(URLComponents(url: nav.endpoint("stream", [.init(name: "id", value: "song & 1")]), resolvingAgainstBaseURL: false))

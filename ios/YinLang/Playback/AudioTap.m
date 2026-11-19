@@ -20,7 +20,10 @@ static void tapProcess(MTAudioProcessingTapRef tap,CMItemCount frames,MTAudioPro
     YLProcessDSP(s->dsp,left,right,*outFrames,s->interleaved?s->channels:1);
 }
 BOOL YLAttachAudioEffects(AVPlayerItem *item,AVAssetTrack *track) {
-    MTAudioProcessingTapCallbacks callbacks={kMTAudioProcessingTapCallbacksVersion_0,NULL,tapInit,tapFinalize,tapPrepare,tapUnprepare,tapProcess};
+    MTAudioProcessingTapCallbacks callbacks;
+    memset(&callbacks,0,sizeof(callbacks));
+    callbacks.version=kMTAudioProcessingTapCallbacksVersion_0;
+    callbacks.init=tapInit;callbacks.finalize=tapFinalize;callbacks.prepare=tapPrepare;callbacks.unprepare=tapUnprepare;callbacks.process=tapProcess;
     MTAudioProcessingTapRef tap=NULL;
     if(MTAudioProcessingTapCreate(kCFAllocatorDefault,&callbacks,kMTAudioProcessingTapCreationFlag_PostEffects,&tap)!=noErr)return NO;
     AVMutableAudioMixInputParameters *parameters=[AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:track];parameters.audioTapProcessor=tap;

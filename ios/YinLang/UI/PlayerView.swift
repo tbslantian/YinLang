@@ -30,6 +30,7 @@ struct PlayerView: View {
     @State private var sleep = false
     @State private var rotation = false
     @State private var effects = false
+    @State private var cast = false
     private var foreground: Color { dark ? .white : Color(red: 0.1, green: 0.15, blue: 0.14) }
     var body: some View {
         GeometryReader { proxy in
@@ -52,6 +53,7 @@ struct PlayerView: View {
         }.presentationDragIndicator(.visible)
             .sheet(isPresented: $player.showQueue) { QueueView().environmentObject(store).environmentObject(player) }
             .sheet(isPresented: $effects) { EffectsView() }
+            .sheet(isPresented: $cast) { CastView(player: player).environmentObject(player) }
             .confirmationDialog("睡眠定时", isPresented: $sleep, titleVisibility: .visible) {
                 ForEach([15, 30, 45, 60, 90], id: \.self) { minutes in Button("\(minutes) 分钟后暂停") { player.setSleep(minutes) } }
                 Button("播完当前内容暂停") { player.sleepAfterCurrent = true; player.sleepUntil = nil }
@@ -106,7 +108,7 @@ struct PlayerView: View {
                 Menu { ForEach(PlayMode.allCases, id: \.self) { mode in Button(mode.title) { player.mode = mode } } } label: { Image(systemName: player.mode.icon).frame(maxWidth: .infinity).frame(height: 44) }.accessibilityLabel(player.mode.title)
                 controlButton(dark ? "sun.max" : "moon", label: "播放器明暗") { dark.toggle() }
                 controlButton(player.sleepUntil != nil || player.sleepAfterCurrent ? "timer.circle.fill" : "timer", label: "睡眠定时") { sleep = true }
-                AirPlayPicker(dark: dark).frame(maxWidth: .infinity).frame(height: 44).accessibilityLabel("投送 AirPlay")
+                controlButton(player.casting ? "airplayaudio.circle.fill" : "airplayaudio", label: "投送") { cast = true }
                 controlButton("list.bullet", label: "播放队列") { player.showQueue = true }
             }.font(.system(size: 20))
         }
