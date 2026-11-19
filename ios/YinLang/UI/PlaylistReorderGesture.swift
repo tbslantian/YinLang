@@ -55,15 +55,32 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             anchor = view
             var ancestor = view.superview
             while let current = ancestor, !(current is UIScrollView) { ancestor = current.superview }
-            guard let found = ancestor as? UIScrollView, found !== scroll, let window = view.window else { return }
+            guard let window = view.window else { return }
+            // SwiftUI can host a background representable beside its scroll
+            // content rather than below UIScrollView in the UIKit hierarchy.
+            // In that layout locate the visible scroll viewport covering it.
+            let found = (ancestor as? UIScrollView) ?? enclosingScroll(in: window, anchor: view)
+            guard let found, found !== scroll else { return }
             detach(); anchor = view; scroll = found
             let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handle(_:)))
             recognizer.minimumPressDuration = 0.32; recognizer.allowableMovement = 9
             recognizer.cancelsTouchesInView = true; recognizer.delegate = self
             window.addGestureRecognizer(recognizer); gesture = recognizer
 #if DEBUG
-            if UITestFixtures.active { print("Playlist reorder attached: \(type(of: found)), anchor \(view.bounds)") }
+            if UITestFixtures.active { DispatchQueue.main.async { [weak self] in self?.parent.report("attached") } }
 #endif
+        }
+        private func enclosingScroll(in window: UIWindow, anchor: UIView) -> UIScrollView? {
+            var pending = window.subviews, matches: [(UIScrollView, CGFloat)] = []
+            let area = anchor.convert(anchor.bounds, to: window)
+            while let view = pending.popLast() {
+                guard !view.isHidden, view.alpha > 0.01 else { continue }
+                pending.append(contentsOf: view.subviews)
+                guard let candidate = view as? UIScrollView, candidate.isScrollEnabled else { continue }
+                let intersection = candidate.convert(candidate.bounds, to: window).intersection(area)
+                if !intersection.isNull { matches.append((candidate, intersection.width * intersection.height)) }
+            }
+            return matches.max { $0.1 < $1.1 }?.0
         }
         func detach() {
             displayLink?.invalidate(); displayLink = nil
@@ -78,7 +95,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             let insideScroll = scroll.map { $0.bounds.contains(gestureRecognizer.location(in: $0)) } ?? false
             let begins = insideScroll && parent.frames.values.contains { $0.contains(point) }
 #if DEBUG
-            if UITestFixtures.active { print("Playlist reorder should begin: \(begins), touch \(point), frames \(parent.frames.count)") }
+            if UITestFixtures.active { parent.report("begin=\(begins);point=\(Int(point.x))/\(Int(point.y));frames=\(parent.frames.count);anchor=\(Int(anchor.bounds.width))/\(Int(anchor.bounds.height))") }
 #endif
             return begins
         }
@@ -91,7 +108,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             switch recognizer.state {
             case .began:
 #if DEBUG
-                if UITestFixtures.active { print("Playlist reorder began") }
+                if UITestFixtures.active { parent.report("began") }
 #endif
                 let point = recognizer.location(in: anchor)
                 guard let selected = parent.keys.first(where: { parent.frames[$0]?.contains(point) == true }),

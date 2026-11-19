@@ -68,6 +68,7 @@ struct PlayerView: View {
                         HStack(spacing: compact ? 16 : 28) {
                             artworkStage(maximumEdge: 520)
                                 .frame(width: max(0, (proxy.size.width - (compact ? 48 : 80)) * 0.43))
+                                .contentShape(Rectangle())
                                 .accessibilityElement(children: .ignore).accessibilityLabel("播放器封面")
                                 .accessibilityIdentifier("player-landscape-artwork")
                             VStack(spacing: 0) {
