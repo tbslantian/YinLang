@@ -48,6 +48,7 @@ final class ScriptRuntime: NSObject, WKUIDelegate, WKNavigationDelegate, WKScrip
     func close() {
         web.stopLoading(); web.configuration.userContentController.removeScriptMessageHandler(forName: "native")
         networkTasks.forEach { $0.cancel() }; networkTasks.removeAll(); probes.forEach { $0.close() }; probes.removeAll()
+        noRedirect.invalidateAndCancel()
         ready?.resume(throwing: CancellationError()); ready = nil
         for id in Array(calls.keys) { finish(id, .failure(CancellationError())) }
     }

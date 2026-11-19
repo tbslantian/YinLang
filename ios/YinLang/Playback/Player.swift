@@ -24,7 +24,6 @@ final class Player: ObservableObject {
     @Published var casting = false
     let dlna = DLNA()
     private let audio = AVPlayer()
-    private var tick: Any?
     private var clock: Timer?
     private var endObserver: NSObjectProtocol?
     private var interruption: NSObjectProtocol?

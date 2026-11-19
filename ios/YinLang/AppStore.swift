@@ -242,7 +242,7 @@ final class AppStore: ObservableObject {
     }
     func push(_ item: MediaItem) async {
         do {
-            let (url, headers, quality) = try await resolve(item, fallback: false)
+            let (url, headers, _) = try await resolve(item, fallback: false)
             guard !url.isFileURL else { throw AppFailure.message("当前文件只有本机地址，请从在线列表选择歌曲") }
             _ = try await server("/v1/jobs", method: "POST", body: ["kind": "music", "url": url.absoluteString, "headers": headers, "title": item.title, "artist": item.subtitle, "quality": defaults.string(forKey: "quality") ?? "320k", "album": item.raw.string("albumName", "album")])
             message = "已推送到服务器"

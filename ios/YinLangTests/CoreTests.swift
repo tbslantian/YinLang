@@ -1,4 +1,5 @@
 import XCTest
+import Network
 @testable import YinLang
 
 final class CoreTests: XCTestCase {
@@ -65,5 +66,32 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(digest, "5d41402abc4b2a76b9719d911017c592")
         let book = try await runtime.call("(()=>{registerSource({id:'test',name:'Test',categoryMenus:()=>[{title:'Radio',tabs:[{title:'Live',url:'radio:live'}]}]});return bookSources()})()") as? [JSONObject]
         XCTAssertEqual(book?.first?.string("id"), "test")
+    }
+    @MainActor func testSynchronousBookAndAsynchronousMusicHTTPTransport() async throws {
+        let listener = try NWListener(using: .tcp, on: .any)
+        listener.newConnectionHandler = { connection in
+            connection.start(queue: .global())
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 16384) { _, _, _, _ in
+                let body = "{\"ok\":true,\"title\":\"音浪\"}"
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body
+                connection.send(content: Data(response.utf8), isComplete: true, completion: .contentProcessed { _ in connection.cancel() })
+            }
+        }
+        let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
+            listener.stateUpdateHandler = { state in
+                if case .ready = state { listener.stateUpdateHandler = nil; continuation.resume(returning: listener.port!.rawValue) }
+                if case .failed(let error) = state { listener.stateUpdateHandler = nil; continuation.resume(throwing: error) }
+            }; listener.start(queue: .global())
+        }
+        defer { listener.cancel() }
+        let runtime = ScriptRuntime(scope: "network-test"); defer { runtime.close() }
+        try await runtime.start("")
+        let address = "http://127.0.0.1:\(port)/test"
+        let sync = try await runtime.call("JSON.parse(Native.network(\(quote(address)), '{}'))") as? JSONObject
+        XCTAssertEqual(sync?["status"] as? Int, 200)
+        XCTAssertTrue(sync?.string("body").contains("音浪") == true)
+        let async = try await runtime.call("catalogTransport(\(quote(address)),{method:'GET'})") as? JSONObject
+        XCTAssertEqual(async?["status"] as? Int, 200)
+        XCTAssertTrue(async?.string("body").contains("音浪") == true)
     }
 }
