@@ -32,7 +32,11 @@ enum UITestFixtures {
     static func catalog(_ operation: String, args: JSONObject = [:]) -> JSONObject {
         if operation == "list", ProcessInfo.processInfo.arguments.contains("-ui-bottom-audit") {
             let page = args["page"] as? Int ?? 1
-            let items = songs.map { row -> JSONObject in var item = row; item["id"] = "page-\(page)-" + row.string("id"); return item }
+            let items = songs.map { row -> JSONObject in
+                var item = row; item["id"] = "page-\(page)-" + row.string("id")
+                if page > 1 { item["name"] = "第\(page)页 · " + row.string("name"); item["title"] = item["name"] }
+                return item
+            }
             return ["list":items,"more":page == 1]
         }
         switch operation {

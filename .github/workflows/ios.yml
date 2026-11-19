@@ -9,6 +9,10 @@ on:
         type: choice
         default: all
         options: [all, iphone, ipad]
+      test_filter:
+        description: Optional XCTest identifier for a focused regression retry
+        type: string
+        default: ''
 permissions:
   contents: read
 jobs:
@@ -16,6 +20,7 @@ jobs:
     runs-on: macos-15-intel
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      SIMULATOR_TEST_FILTER: ${{ inputs.test_filter }}
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +87,9 @@ jobs:
           set -o pipefail
           xcrun simctl boot "$PHONE_ID" || true
           xcrun simctl bootstatus "$PHONE_ID" -b
-          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$PHONE_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPhone.xcresult CODE_SIGNING_ALLOWED=NO test | tee ios-iphone-test.log
+          selection=()
+          if [ -n "$SIMULATOR_TEST_FILTER" ]; then selection=("-only-testing:$SIMULATOR_TEST_FILTER"); fi
+          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$PHONE_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPhone.xcresult "${selection[@]}" CODE_SIGNING_ALLOWED=NO test | tee ios-iphone-test.log
       - name: Upload iPhone test log
         if: ${{ !cancelled() && steps.archive.outcome == 'success' && inputs.test_device != 'ipad' }}
         uses: actions/upload-artifact@v4
@@ -97,7 +104,16 @@ jobs:
           xcrun simctl shutdown "$PHONE_ID" || true
           xcrun simctl boot "$TABLET_ID" || true
           xcrun simctl bootstatus "$TABLET_ID" -b
-          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$TABLET_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPad.xcresult -only-testing:YinLangUITests -only-testing:YinLangTests/PlaybackTests CODE_SIGNING_ALLOWED=NO test | tee ios-ipad-test.log
+          selection=(-only-testing:YinLangUITests -only-testing:YinLangTests/PlaybackTests)
+          if [ -n "$SIMULATOR_TEST_FILTER" ]; then selection=("-only-testing:$SIMULATOR_TEST_FILTER"); fi
+          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$TABLET_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPad.xcresult "${selection[@]}" CODE_SIGNING_ALLOWED=NO test | tee ios-ipad-test.log
+      - name: Upload iPad test log
+        if: ${{ !cancelled() && steps.archive.outcome == 'success' && inputs.test_device != 'iphone' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: YinLang-iOS-iPad-test-log
+          retention-days: 30
+          path: ios-ipad-test.log
       - name: Export layout screenshots
         if: always()
         run: |

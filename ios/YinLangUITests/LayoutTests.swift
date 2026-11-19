@@ -147,8 +147,14 @@ final class LayoutTests: XCTestCase {
             XCTAssertLessThanOrEqual(target.frame.maxY, mini.frame.minY - 2, screen)
             if identifier == "load-more" {
                 target.tap()
-                let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: target)
-                XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 5), .completed)
+                // Assert the result of pagination, rather than the lifetime of a
+                // removed LazyVStack button's cached accessibility element.
+                let secondPage = app.staticTexts["第2页 · 风继续吹 · 1"].firstMatch
+                for _ in 0..<3 {
+                    if secondPage.exists { break }
+                    app.scrollViews.firstMatch.swipeUp()
+                }
+                XCTAssertTrue(secondPage.waitForExistence(timeout: 15), "点击加载更多必须追加第二页歌曲")
             }
             capture("bottom-actions-" + screen); app.terminate()
         }
