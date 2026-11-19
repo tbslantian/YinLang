@@ -40,9 +40,7 @@ struct LibraryView: View {
                 HStack { SectionTitle(title: "我的歌单"); Button { create = true } label: { YLIcon(systemName: "plus").frame(width: 44, height: 44) }.accessibilityLabel("创建服务器歌单") }
                 if !error.isEmpty { ErrorPanel(text: error) { Task { await load() } } }
                 if playlists.isEmpty && error.isEmpty { Text("还没有服务器歌单").font(.system(size: 13)).foregroundStyle(Palette.muted) }
-                ForEach(playlists) { item in
-                    LibraryPlaylistRow(item: item).dropDestination(for: String.self) { keys, _ in guard let key = keys.first, let from = playlists.firstIndex(where: { $0.key == key }), let to = playlists.firstIndex(of: item) else { return false }; playlists.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to); UserDefaults.standard.set(playlists.map(\.key), forKey: orderKey); return true }
-                }
+                LibraryPlaylistRows(items: $playlists) { UserDefaults.standard.set(playlists.map(\.key), forKey: orderKey) }
             }
         }.androidPage("音乐库", category: "音乐") { NavigationLink { ConnectionView() } label: { Image("navidrome_logo").resizable().scaledToFit().frame(width: 34, height: 34).frame(width: 48, height: 48) }.accessibilityLabel("音乐库连接与音质设置") }
             .task(id: store.connectionRevision) { await load() }.refreshable { await load() }
@@ -64,13 +62,37 @@ struct LibraryView: View {
         guard !Task.isCancelled, store.nav?.identity == nav.identity else { return }
         if let count { songCount = count }
     }
-    private func move(_ item: MediaItem, offset: Int) { guard let index = playlists.firstIndex(of: item), playlists.indices.contains(index + offset) else { return }; playlists.swapAt(index, index + offset); UserDefaults.standard.set(playlists.map(\.key), forKey: orderKey) }
+}
+
+private struct LibraryPlaylistRows: View {
+    @Binding var items: [MediaItem]
+    var save: () -> Void
+    @State private var frames: [String: CGRect] = [:]
+    @State private var dragging: String?
+    var body: some View {
+        VStack(spacing: 16) {
+            ForEach(items) { item in
+                LibraryPlaylistRow(item: item).opacity(dragging == item.key ? 0 : 1)
+                    .background { GeometryReader { proxy in Color.clear.preference(key: PlaylistRowFrames.self, value: [item.key: proxy.frame(in: .named("library-playlists"))]) } }
+            }
+        }.coordinateSpace(name: "library-playlists")
+            .onPreferenceChange(PlaylistRowFrames.self) { frames = $0 }
+            .background {
+                PlaylistReorderGesture(keys: items.map(\.key), frames: frames, begin: { dragging = $0 }, move: { key, index in
+                    guard let from = items.firstIndex(where: { $0.key == key }), from != index, items.indices.contains(index) else { return }
+                    withAnimation(.easeInOut(duration: 0.16)) { items.move(fromOffsets: IndexSet(integer: from), toOffset: index > from ? index + 1 : index) }
+                }, end: { dragging = nil; save() })
+            }
+    }
+}
+
+private struct PlaylistRowFrames: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue()) { _, new in new } }
 }
 
 private struct LibraryPlaylistRow: View {
-    @EnvironmentObject private var store: AppStore
     let item: MediaItem
-    @State private var rowSize = CGSize(width: 320, height: 66)
     private var label: some View {
         HStack(spacing: 12) {
             Artwork(item: item)
@@ -88,16 +110,6 @@ private struct LibraryPlaylistRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("library-playlist-open-" + item.key)
             NavigationLink { PlaylistEditor(item: item) } label: { menuIcon }.accessibilityLabel("歌单操作")
         }.frame(maxWidth: .infinity).androidSurface().buttonStyle(.plain)
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.onAppear { rowSize = proxy.size }.onChange(of: proxy.size) { _, size in rowSize = size }
-                }
-            }
-            .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 16))
-            .draggable(item.key) {
-                HStack(spacing: 0) { label; menuIcon }
-                    .frame(width: rowSize.width, height: rowSize.height).androidSurface().environmentObject(store)
-            }
     }
 }
 

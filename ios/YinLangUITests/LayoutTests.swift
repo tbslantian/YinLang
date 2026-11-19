@@ -235,6 +235,41 @@ final class LayoutTests: XCTestCase {
         XCTAssertTrue(current.exists, "移除非当前歌曲不能触发播放")
         XCTAssertFalse(app.alerts["音浪"].exists)
     }
+    @MainActor func testLibraryPlaylistLongPressKeepsSizeReordersAndRestores() throws {
+        XCUIDevice.shared.orientation = .portrait
+        var app = launch("library", extraArguments: ["-ui-reset-library-order", "-ui-many-playlists"])
+        let first = app.buttons["library-playlist-open-playlist-1"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 8))
+        let header = app.staticTexts["page-title-音乐库"].firstMatch
+        for _ in 0..<4 {
+            if first.frame.minY < header.frame.maxY + 160 { break }
+            let scroll = app.scrollViews.firstMatch
+            scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).press(forDuration: 0.05, thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)))
+        }
+        // This is an actual touch sequence on the whole row's empty area.
+        let start = first.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5))
+        let bottom = app.scrollViews.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.96))
+        start.press(forDuration: 0.5, thenDragTo: bottom, withVelocity: .slow, thenHoldForDuration: 1.0)
+        let audit = app.descendants(matching: .any).matching(identifier: "library-reorder-audit").firstMatch
+        XCTAssertTrue(audit.waitForExistence(timeout: 5))
+        let values = (audit.value as? String ?? "").split(separator: ",").compactMap { Double($0) }
+        XCTAssertEqual(values.count, 5)
+        if values.count == 5 {
+            XCTAssertGreaterThan(values[0], 250); XCTAssertGreaterThanOrEqual(values[1], 66)
+            XCTAssertLessThanOrEqual(values[2], 1, "整个拖动过程浮层都必须保持原宽高")
+            XCTAssertGreaterThanOrEqual(values[3], 2, "松手前必须连续换位")
+            XCTAssertGreaterThan(values[4], 20, "靠近底边必须自动滚动")
+        }
+        capture("library-full-size-reorder")
+        app.terminate()
+        app = launch("library", extraArguments: ["-ui-many-playlists"])
+        let second = app.buttons["library-playlist-open-playlist-2"].firstMatch
+        XCTAssertTrue(second.waitForExistence(timeout: 8))
+        let restored = app.buttons["library-playlist-open-playlist-1"].firstMatch
+        XCTAssertGreaterThan(restored.frame.minY, second.frame.minY, "重启后必须保留排序")
+        second.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).tap()
+        XCTAssertTrue(app.staticTexts["page-title-随心听"].waitForExistence(timeout: 5))
+    }
     @MainActor func testMiniPlayerAlwaysShowsCoverToggleAndAdjacentTrackButtons() throws {
         let app = launch("music", extraArguments: ["-ui-mini-player"])
         let toggle = app.buttons["mini-play-pause"].firstMatch

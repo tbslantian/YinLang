@@ -39,12 +39,16 @@ actor MediaCache {
     static let shared = MediaCache()
     private var pending: [String: (id: UUID, task: Task<URL?, Never>)] = [:]
     func cached(_ key: String, books: Bool) -> URL? {
-        let url = folder(books).appendingPathComponent(Disk.hash(key))
-        guard Self.hasAudioData(url) else { return nil }
+        let base = folder(books).appendingPathComponent(Disk.hash(key))
+        // AVFoundation needs the container suffix for local files. Keep reading
+        // legacy entries as well; a failed legacy read still falls back to parsing.
+        let candidates = Self.audioExtensions.map { base.appendingPathExtension($0) } + [base]
+        guard let url = candidates.first(where: { Self.hasAudioData($0) }) else { return nil }
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
         return url
     }
     private func folder(_ books: Bool) -> URL { Disk.directory(Disk.cache.appendingPathComponent(books ? "books" : "music")) }
+    private static let audioExtensions = ["flac", "wav", "m4a", "aac", "mp3", "aiff", "caf"]
     private static func hasAudioData(_ url: URL) -> Bool {
         guard let info = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), info.isRegularFile == true, (info.fileSize ?? 0) >= 32,
               let handle = try? FileHandle(forReadingFrom: url) else { return false }
@@ -81,7 +85,8 @@ actor MediaCache {
                 guard (try? await asset.load(.isPlayable)) == true,
                       !(try await asset.loadTracks(withMediaType: .audio)).isEmpty else { return nil }
                 try Task.checkCancellation()
-                try FileManager.default.moveItem(at: staged, to: destination); return destination
+                let playableDestination = destination.appendingPathExtension(staged.pathExtension)
+                try FileManager.default.moveItem(at: staged, to: playableDestination); return playableDestination
             } catch { return nil }
         }
         pending[pendingKey] = (id, task)

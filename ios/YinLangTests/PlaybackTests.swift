@@ -137,7 +137,7 @@ final class PlaybackTests: XCTestCase {
         let scope = UUID().uuidString
         let first = MediaItem(["id": scope + "-first", "name": "Current"], source: "wy")
         let next = MediaItem(["id": scope + "-next", "name": "Next", "lrc": "[00:00]Next"], source: "wy")
-        let file = Disk.directory(Disk.cache.appendingPathComponent("music")).appendingPathComponent(Disk.hash(store.cacheKey(next, quality: "flac")))
+        let file = Disk.directory(Disk.cache.appendingPathComponent("music")).appendingPathComponent(Disk.hash(store.cacheKey(next, quality: "flac"))).appendingPathExtension("wav")
         defer {
             while !player.queue.isEmpty { player.remove(0) }
             store.invalidate(scope); store.plugins = previousPlugins
@@ -371,7 +371,7 @@ final class PlaybackTests: XCTestCase {
         XCTAssertGreaterThan(player.audioInfo.bitsPerSecond, 0)
         XCTAssertGreaterThan(player.duration, 1)
         if cacheEnabled {
-            let file = Disk.directory(Disk.cache.appendingPathComponent("music")).appendingPathComponent(Disk.hash(store.cacheKey(item)))
+            let file = Disk.directory(Disk.cache.appendingPathComponent("music")).appendingPathComponent(Disk.hash(store.cacheKey(item))).appendingPathExtension("wav")
             seededCache = file
             for _ in 0..<100 {
                 if player.resolutionNotice?.phase == .cached { break }

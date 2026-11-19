@@ -22,6 +22,9 @@ enum UITestFixtures {
         if ProcessInfo.processInfo.arguments.contains("-ui-reset-next-settings") {
             UserDefaults.standard.removeObject(forKey: NextTrackSettings.parseKey); UserDefaults.standard.removeObject(forKey: NextTrackSettings.cacheKey)
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-reset-library-order") {
+            UserDefaults.standard.removeObject(forKey: "playlist-order:" + Navidrome(base: "https://fixture.yinlang.invalid", user: "fixture", password: "").identity)
+        }
         UserDefaults.standard.set("https://fixture.yinlang.invalid", forKey:"nav-url"); UserDefaults.standard.set("fixture", forKey:"nav-user"); UserDefaults.standard.set("私人音乐库", forKey:"nav-alias")
         // Root onAppear can run after a child .task. Notify account-bound
         // pages after installing the fixture account so they reload it.
@@ -53,7 +56,9 @@ enum UITestFixtures {
     static func nav(_ command: String) -> JSONObject {
         switch command {
         case "getScanStatus": return ["scanStatus":["count":8,"scanning":false]]
-        case "getPlaylists": return ["playlists":["playlist":playlists]]
+        case "getPlaylists":
+            let rows = ProcessInfo.processInfo.arguments.contains("-ui-many-playlists") ? (1...24).map { index -> JSONObject in var row = playlists[(index - 1) % 4]; row["id"] = "playlist-\(index)"; return row } : playlists
+            return ["playlists":["playlist":rows]]
         case "getPlaylist": var row = playlists[0]; row["entry"] = songs; return ["playlist":row]
         case "getRandomSongs": return ["randomSongs":["song":songs]]
         case "search3": return ["searchResult3":["song":songs]]
