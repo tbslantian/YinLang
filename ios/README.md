@@ -2,6 +2,12 @@
 
 原生 SwiftUI 通用应用，最低 iOS / iPadOS 17。iPhone 使用导航页面，iPad 使用可折叠侧栏，支持横竖屏和可调整窗口。首页默认经典影像，直接复用安卓版 `home_music_light/dark`、`home_books_light/dark` 原图。
 
+## 0.8.3 播放与音源名称修复
+
+- 修正长音频会话与 `allowAirPlay` 的非法组合，解决进入播放器前的 `OSStatus -50`。使用 Apple 推荐的 `.playback / .default / .longFormAudio` 配置，继续支持系统 AirPlay。
+- LX 源从脚本头读取 `@name`、`@version`，初始化时提供 `lx.currentScriptInfo`（包含作者、主页、说明和原脚本）。已安装源自动补回名称与版本，保留源 ID、启停状态和更新地址。
+- 新增本地 HTTP + PCM 音频回归测试，分别经过 LX 解析链路及 Navidrome 登录/stream 链路驱动 AVPlayer，验证播放时间实际前进和暂停/继续；iPhone、iPad 都运行这些测试。该测试不替代具体第三方源、服务器与真机听测。
+
 ## 0.8.2 安装兼容修复
 
 IPA 的 `CFBundleDisplayName` 改为 `YinLang`，与 `CFBundleName` 一起使用 ASCII 名称，避免部分 SideStore 版本注册 App ID 时把中文名称作为 `appIdName` 提交而遭拒。设备桌面名称显示为 YinLang，应用内部继续使用中文“音浪”。构建打包时检查两个名称字段，防止回归。仍需在实际 SideStore / Apple 账号上确认安装结果。

@@ -41,13 +41,13 @@ jobs:
           mkdir -p ios/build/package/Payload
           cp -R ios/build/YinLang.xcarchive/Products/Applications/YinLang.app ios/build/package/Payload/
           cd ios/build/package
-          /usr/bin/zip -qry ../YinLang-0.8.2-unsigned.ipa Payload
+          /usr/bin/zip -qry ../YinLang-0.8.3-unsigned.ipa Payload
           cd ..
-          shasum -a 256 YinLang-0.8.2-unsigned.ipa > SHA256SUMS.txt
+          shasum -a 256 YinLang-0.8.3-unsigned.ipa > SHA256SUMS.txt
           python3 - <<'PY'
           import hashlib, json, os, plistlib
           from pathlib import Path
-          ipa = Path('YinLang-0.8.2-unsigned.ipa')
+          ipa = Path('YinLang-0.8.3-unsigned.ipa')
           info = plistlib.loads(Path('YinLang.xcarchive/Products/Applications/YinLang.app/Info.plist').read_bytes())
           # SideStore versions affected by non-ASCII appIdName must see an ASCII name.
           for key in ['CFBundleDisplayName', 'CFBundleName']:
@@ -79,7 +79,7 @@ jobs:
           xcrun simctl shutdown "$PHONE_ID" || true
           xcrun simctl boot "$TABLET_ID" || true
           xcrun simctl bootstatus "$TABLET_ID" -b
-          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$TABLET_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPad.xcresult -only-testing:YinLangUITests CODE_SIGNING_ALLOWED=NO test | tee ios-ipad-test.log
+          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$TABLET_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPad.xcresult -only-testing:YinLangUITests -only-testing:YinLangTests/PlaybackTests CODE_SIGNING_ALLOWED=NO test | tee ios-ipad-test.log
       - name: Export layout screenshots
         if: always()
         run: |

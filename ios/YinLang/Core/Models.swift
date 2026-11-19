@@ -170,6 +170,12 @@ struct Plugin: Identifiable, Codable, Equatable {
     var address: String
     var books: Bool
     var enabled: Bool = true
+    var runtimeScript: String {
+        guard !books else { return script }
+        var info: JSONObject = ["name": name, "version": version, "rawScript": script]
+        for field in ["description", "author", "homepage"] { info[field] = PluginArchive.scriptField(script, field) }
+        return "globalThis.lx.currentScriptInfo=" + jsonText(info) + ";\n" + script
+    }
 }
 
 enum Platform: String, CaseIterable, Identifiable {

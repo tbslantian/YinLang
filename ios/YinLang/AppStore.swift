@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppStore: ObservableObject {
-    @Published var plugins: [Plugin] = Disk.read("plugins.json", fallback: []) { didSet { Disk.save(plugins, "plugins.json") } }
+    @Published var plugins: [Plugin] = (Disk.read("plugins.json", fallback: []) as [Plugin]).map(PluginArchive.restoreMusicMetadata) { didSet { Disk.save(plugins, "plugins.json") } }
     @Published var liked: [MediaItem] = Disk.read("liked.json", fallback: []) { didSet { Disk.save(liked, "liked.json") } }
     @Published var followed: [MediaItem] = Disk.read("followed.json", fallback: []) { didSet { Disk.save(followed, "followed.json") } }
     @Published var bookshelf: [MediaItem] = Disk.read("bookshelf.json", fallback: []) { didSet { Disk.save(bookshelf, "bookshelf.json") } }
@@ -18,6 +18,7 @@ final class AppStore: ObservableObject {
     private var runtimes: [String: ScriptRuntime] = [:]
     private var starts: [String: Task<ScriptRuntime, Error>] = [:]
     private let defaults = UserDefaults.standard
+    init() { Disk.save(plugins, "plugins.json") }
     var nav: Navidrome? {
         let base = defaults.string(forKey: "nav-url") ?? "", user = defaults.string(forKey: "nav-user") ?? ""
         guard !base.isEmpty, !user.isEmpty else { return nil }
@@ -81,7 +82,7 @@ final class AppStore: ObservableObject {
     }
     func install(_ data: Data, name: String, address: String, books: Bool) async throws {
         var plugin = try PluginArchive.read(data, name: name, address: address, books: books)
-        let runtime = try await runtime(plugin.id, scripts: plugin.script)
+        let runtime = try await runtime(plugin.id, scripts: plugin.runtimeScript)
         do {
             if books {
                 guard let sources = try await runtime.call("bookSources()") as? [JSONObject], !sources.isEmpty else { throw AppFailure.message("插件没有注册听书源") }
@@ -131,7 +132,7 @@ final class AppStore: ObservableObject {
         await installBundledBooks()
         var sources: [JSONObject] = []
         for plugin in plugins where plugin.books && plugin.enabled {
-            let runtime = try await runtime(plugin.id, scripts: plugin.script)
+            let runtime = try await runtime(plugin.id, scripts: plugin.runtimeScript)
             let rows = try await runtime.call("bookSources()") as? [JSONObject] ?? []
             sources += rows.filter { !$0.string("name").contains("网易云音乐") }.map { row in var row = row; row["_plugin"] = plugin.id; return row }
         }
@@ -139,7 +140,7 @@ final class AppStore: ObservableObject {
     }
     func bookCall(_ source: String, pluginID: String, action: String, args: [Any]) async throws -> Any {
         guard let plugin = plugins.first(where: { $0.id == pluginID && $0.enabled }) else { throw AppFailure.message("听书插件已停用或移除") }
-        let runtime = try await runtime(plugin.id, scripts: plugin.script)
+        let runtime = try await runtime(plugin.id, scripts: plugin.runtimeScript)
         return try await runtime.call("bookCall(\(quote(source)),\(quote(action)),\(jsonText(args)))")
     }
     func cacheKey(_ item: MediaItem, quality: String? = nil) -> String {
@@ -168,7 +169,7 @@ final class AppStore: ObservableObject {
         guard !sources.isEmpty else { throw AppFailure.message("请在音乐设置导入 LX JavaScript 音源") }
         var lastError = "音源解析失败"
         var capabilities: [String: JSONObject] = [:]
-        for plugin in sources { do { let runtime = try await runtime(plugin.id, scripts: plugin.script); capabilities[plugin.id] = try await runtime.call("lxPlatforms()", timeout: 20) as? JSONObject ?? [:] } catch { lastError = error.localizedDescription } }
+        for plugin in sources { do { let runtime = try await runtime(plugin.id, scripts: plugin.runtimeScript); capabilities[plugin.id] = try await runtime.call("lxPlatforms()", timeout: 20) as? JSONObject ?? [:] } catch { lastError = error.localizedDescription } }
         var matches: [String: [MediaItem]] = [item.source: [item]]
         // Search other supported platforms lazily after the original recording fails.
         let alternatives = Platform.allCases.map(\.rawValue).filter { candidate in candidate != "all" && candidate != item.source && capabilities.values.contains { $0[candidate] != nil } }
@@ -188,7 +189,7 @@ final class AppStore: ObservableObject {
                         guard supported.isEmpty || supported.contains(quality) else { continue }
                         do {
                             activity = "\(plugin.name) · \(Platform(rawValue: platform)?.title ?? platform) · \(quality)"
-                            let runtime = try await runtime(plugin.id, scripts: plugin.script)
+                            let runtime = try await runtime(plugin.id, scripts: plugin.runtimeScript)
                             let result = try await runtime.call("lxResolve(\(quote(platform)),\(quote(quality)),\(jsonText(candidate.onlineMusicInfo)))", timeout: 35) as? JSONObject ?? [:]
                             guard let url = URL(string: result.string("url")), ["http", "https"].contains(url.scheme ?? "") else { continue }
                             let headers = result["headers"] as? [String: String] ?? [:]

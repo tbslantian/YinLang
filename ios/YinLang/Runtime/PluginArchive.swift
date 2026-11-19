@@ -1,6 +1,22 @@
 import Foundation
 
 enum PluginArchive {
+    static func scriptField(_ script: String, _ field: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: "(?m)^[ \\t]*(?://[ \\t]*|\\*[ \\t]*)?@" + NSRegularExpression.escapedPattern(for: field) + "[ \\t]+([^\\r\\n]+)"),
+              let match = regex.firstMatch(in: script, range: NSRange(script.startIndex..., in: script)),
+              let range = Range(match.range(at: 1), in: script) else { return "" }
+        var value = String(script[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasSuffix("*/") { value = String(value.dropLast(2)).trimmingCharacters(in: .whitespacesAndNewlines) }
+        return value
+    }
+    static func restoreMusicMetadata(_ plugin: Plugin) -> Plugin {
+        guard !plugin.books else { return plugin }
+        var plugin = plugin
+        let name = scriptField(plugin.script, "name"), version = scriptField(plugin.script, "version")
+        if !name.isEmpty { plugin.name = name }
+        if !version.isEmpty { plugin.version = version }
+        return plugin
+    }
     static func decompress(_ data: Data, raw: Bool = false, partial: Bool = false) throws -> Data {
         var stream = z_stream()
         guard inflateInit2_(&stream, raw ? -MAX_WBITS : MAX_WBITS, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else { throw AppFailure.message("解压初始化失败") }
@@ -33,8 +49,9 @@ enum PluginArchive {
     static func read(_ data: Data, name: String, address: String, books: Bool) throws -> Plugin {
         guard data.count <= 8_000_000 else { throw AppFailure.message("插件文件超过 8 MB") }
         if !books {
-            guard let script = String(data: data, encoding: .utf8), !script.isEmpty else { throw AppFailure.message("请选择 UTF-8 JavaScript 音源") }
-            return Plugin(id: UUID().uuidString, name: name, version: "", script: script, address: address, books: false)
+            guard let decoded = String(data: data, encoding: .utf8), !decoded.isEmpty else { throw AppFailure.message("请选择 UTF-8 JavaScript 音源") }
+            let script = decoded.hasPrefix("\u{FEFF}") ? String(decoded.dropFirst()) : decoded
+            return restoreMusicMetadata(Plugin(id: UUID().uuidString, name: name, version: "", script: script, address: address, books: false))
         }
         func number(_ offset: Int, _ width: Int) throws -> Int {
             guard offset >= 0, offset + width <= data.count else { throw AppFailure.message("ZIP 文件截断") }

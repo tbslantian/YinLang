@@ -113,8 +113,7 @@ final class Player: ObservableObject {
                     try await dlna.cast(current, resolved: url, headers: headers, to: receiver)
                     status = "DLNA · " + receiver.name; loading = false; playing = true; duration = current.duration; return
                 }
-                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, policy: .longFormAudio, options: [.allowAirPlay])
-                try AVAudioSession.sharedInstance().setActive(true)
+                try activateAudioSession()
                 let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
                 let item = AVPlayerItem(asset: asset)
                 item.audioTimePitchAlgorithm = .spectral
@@ -157,9 +156,24 @@ final class Player: ObservableObject {
         }
     }
     func toggle() { playing ? pause() : resume() }
+    private func activateAudioSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            // Long-form playback already supports AirPlay. Explicit allowAirPlay is
+            // a playAndRecord option and fails with OSStatus -50 on physical devices.
+            try session.setCategory(.playback, mode: .default, policy: .longFormAudio)
+            try session.setActive(true)
+        } catch {
+            let failure = error as NSError
+            throw AppFailure.message("初始化音频会话失败：\(failure.localizedDescription) [\(failure.domain)/\(failure.code)]")
+        }
+    }
     func resume() {
         if let receiver = dlna.current { playing = true; Task { _ = try? await dlna.soap(receiver, action: "Play", values: [("Speed", "1")]) }; return }
-        guard audio.currentItem != nil else { if current != nil { start() }; return }; try? AVAudioSession.sharedInstance().setActive(true); audio.playImmediately(atRate: speed); playing = true; updateNowPlaying()
+        guard let item = audio.currentItem else { if current != nil { start() }; return }
+        if item.status == .failed { start(); return }
+        do { try activateAudioSession(); audio.playImmediately(atRate: speed); playing = true; updateNowPlaying() }
+        catch { playing = false; loading = false; status = error.localizedDescription; store?.message = status }
     }
     func pause() { audio.pause(); if let receiver = dlna.current { Task { _ = try? await dlna.soap(receiver, action: "Pause") } }; playing = false; saveProgress(); updateNowPlaying() }
     func seek(_ seconds: Double) {
