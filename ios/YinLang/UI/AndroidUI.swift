@@ -176,15 +176,17 @@ struct DiscoveryHero: View {
             ZStack(alignment: .bottomLeading) {
                 if books {
                     Color(rgb: 0xf1e2cc)
-                    Image("android-hero_books").resizable().scaledToFill().frame(width: proxy.size.width, height: proxy.size.height).clipped()
+                    Image("android-hero_books").resizable().scaledToFill().frame(width: proxy.size.width, height: proxy.size.height).clipped().accessibilityHidden(true)
                     LinearGradient(colors: [Color(rgb: 0x0f1723).opacity(0.03), Color(rgb: 0x1a2831).opacity(0.9)], startPoint: .top, endPoint: .bottom)
                 } else {
                     Palette.accent
-                    Image("android-library_discovery_record").resizable().scaledToFit().frame(width: 112, height: 112).offset(x: 12, y: 12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    Image("android-library_discovery_record").resizable().scaledToFit().frame(width: 112, height: 112).offset(x: 12, y: 12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).accessibilityHidden(true)
                 }
                 VStack(alignment: .leading, spacing: 4) { Text("发现").font(.system(size: 26, weight: .bold)); HStack { Text(books ? "听书 · 广播 · 播客" : "探索音乐库").font(.system(size: 13)); Spacer(minLength: 4); YLIcon(systemName: "arrow.right", size: 19).rotationEffect(.degrees(-45)) } }.foregroundStyle(books ? .white : Palette.onAccent).padding(.horizontal, 16).padding(.bottom, 22)
             }.frame(width: proxy.size.width, height: proxy.size.height).clipShape(RoundedRectangle(cornerRadius: 18))
-        }
+        }.contentShape(RoundedRectangle(cornerRadius: 18))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(books ? "发现，听书、广播、播客" : "发现，探索音乐库")
     }
 }
 struct LibraryShortcut: View {
