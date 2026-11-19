@@ -17,7 +17,7 @@ struct AudioStreamInfo: Equatable {
     }
     static func read(_ track: AVAssetTrack) async -> AudioStreamInfo {
         let descriptions = (try? await track.load(.formatDescriptions)) ?? []
-        let bitrate = Double((try? await track.load(.estimatedDataRate)) ?? 0)
+        var bitrate = Double((try? await track.load(.estimatedDataRate)) ?? 0)
         guard let description = descriptions.first,
               let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee else { return AudioStreamInfo(bitsPerSecond: bitrate) }
         let format: String
@@ -31,6 +31,15 @@ struct AudioStreamInfo: Equatable {
         default:
             let code = basic.mFormatID
             format = String(bytes: [UInt8((code >> 24) & 255), UInt8((code >> 16) & 255), UInt8((code >> 8) & 255), UInt8(code & 255)], encoding: .ascii)?.trimmingCharacters(in: .whitespaces).uppercased() ?? ""
+        }
+        // HTTP PCM tracks may report no estimated rate. Their stream
+        // description gives the exact rate, without using the requested tier.
+        if bitrate <= 0, basic.mSampleRate > 0 {
+            if basic.mBytesPerPacket > 0, basic.mFramesPerPacket > 0 {
+                bitrate = basic.mSampleRate * Double(basic.mBytesPerPacket) * 8 / Double(basic.mFramesPerPacket)
+            } else if basic.mFormatID == kAudioFormatLinearPCM {
+                bitrate = basic.mSampleRate * Double(basic.mBitsPerChannel) * Double(basic.mChannelsPerFrame)
+            }
         }
         return AudioStreamInfo(format: format, bitsPerSecond: bitrate, sampleRate: basic.mSampleRate)
     }

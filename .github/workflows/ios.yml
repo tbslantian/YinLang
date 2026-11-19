@@ -74,6 +74,13 @@ jobs:
           xcrun simctl boot "$PHONE_ID" || true
           xcrun simctl bootstatus "$PHONE_ID" -b
           xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$PHONE_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPhone.xcresult CODE_SIGNING_ALLOWED=NO test | tee ios-iphone-test.log
+      - name: Upload iPhone test log
+        if: ${{ !cancelled() && steps.archive.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: YinLang-iOS-iPhone-test-log
+          retention-days: 30
+          path: ios-iphone-test.log
       - name: Test on iPad
         if: ${{ !cancelled() && steps.archive.outcome == 'success' }}
         run: |

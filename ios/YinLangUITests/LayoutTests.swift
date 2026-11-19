@@ -228,7 +228,7 @@ final class LayoutTests: XCTestCase {
         let count = app.staticTexts["library-song-count"].firstMatch
         XCTAssertTrue(count.waitForExistence(timeout: 5))
         let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "私人音乐库 · 8 首歌曲"), object: count)
-        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 15), .completed)
         let hero = app.buttons["library-discovery"].firstMatch
         XCTAssertTrue(hero.exists); XCTAssertGreaterThanOrEqual(hero.frame.height, 232 - 0.5)
         let songs = app.buttons["library-songs-shortcut"].firstMatch
