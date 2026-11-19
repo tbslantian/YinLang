@@ -62,16 +62,27 @@ struct Navidrome {
         _ = try await get("updatePlaylist", [.init(name: "playlistId", value: id), .init(name: "songIndexToRemove", value: "\(position)")])
     }
     func stream(_ item: MediaItem, original: Bool = false) throws -> URL {
+        let settings = playbackSettings(original: original)
+        return try endpoint(original ? "download" : "stream", [.init(name: "id", value: item.key), .init(name: "maxBitRate", value: settings.bitrate), .init(name: "format", value: settings.format)])
+    }
+    func playbackSettings(original: Bool = false) -> (bitrate: String, format: String) {
         let defaults = UserDefaults.standard
         let networkKey = NetworkRoute.shared.cellular ? "nav-bitrate-mobile" : "nav-bitrate-wifi"
         let bitrate = original ? "0" : defaults.string(forKey: networkKey) ?? defaults.string(forKey: "nav-bitrate") ?? "0"
-        return try endpoint(original ? "download" : "stream", [.init(name: "id", value: item.key), .init(name: "maxBitRate", value: bitrate), .init(name: "format", value: bitrate == "0" ? "raw" : defaults.string(forKey: "nav-format") ?? "mp3")])
+        return (bitrate, bitrate == "0" ? "raw" : defaults.string(forKey: "nav-format") ?? "mp3")
     }
     func cover(_ id: String, size: Int = 400) -> String {
 #if DEBUG
         if UITestFixtures.active { return "fixture:home_music_light" }
 #endif
-        return (try? endpoint("getCoverArt", [.init(name: "id", value: id), .init(name: "size", value: "\(size)")]).absoluteString) ?? "" }
+        guard !id.isEmpty else { return "" }
+        // The endpoint uses a fresh authentication salt. Keep the resulting cover
+        // URL stable across progress ticks, while separating accounts/passwords.
+        let key = Disk.hash(jsonText([base, user, password, id, String(size)]))
+        return NavidromeCoverURLs.shared.address(key) {
+            (try? endpoint("getCoverArt", [.init(name: "id", value: id), .init(name: "size", value: "\(size)")]).absoluteString) ?? ""
+        }
+    }
     func lyrics(_ item: MediaItem) async -> String {
         if let result = try? await get("getLyricsBySongId", [.init(name: "id", value: item.key)]) {
             let lists = result.object("lyricsList").rows("structuredLyrics")
@@ -85,6 +96,21 @@ struct Navidrome {
             }
         }
         return (try? await get("getLyrics", [.init(name: "artist", value: item.subtitle), .init(name: "title", value: item.title)]).object("lyrics").string("value")) ?? ""
+    }
+}
+
+private final class NavidromeCoverURLs: @unchecked Sendable {
+    static let shared = NavidromeCoverURLs()
+    private let lock = NSLock()
+    private var values: [String: String] = [:]
+    func address(_ key: String, create: () -> String) -> String {
+        lock.withLock {
+            if let value = values[key] { return value }
+            let value = create()
+            if values.count >= 1024 { values.removeAll() }
+            if !value.isEmpty { values[key] = value }
+            return value
+        }
     }
 }
 

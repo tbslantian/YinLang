@@ -19,13 +19,16 @@ enum UITestFixtures {
     }
     @MainActor static func prepare(_ store: AppStore, _ player: Player) {
         guard active else { return }
+        if ProcessInfo.processInfo.arguments.contains("-ui-reset-next-settings") {
+            UserDefaults.standard.removeObject(forKey: NextTrackSettings.parseKey); UserDefaults.standard.removeObject(forKey: NextTrackSettings.cacheKey)
+        }
         UserDefaults.standard.set("https://fixture.yinlang.invalid", forKey:"nav-url"); UserDefaults.standard.set("fixture", forKey:"nav-user"); UserDefaults.standard.set("私人音乐库", forKey:"nav-alias")
         // Root onAppear can run after a child .task. Notify account-bound
         // pages after installing the fixture account so they reload it.
         store.connectionRevision += 1
         store.plugins = [Plugin(id:"fixture-lx",name:"测试音源",version:"1.2.3",script:"/**\n * @name 测试音源\n */",address:"",books:false),Plugin(id:"fixture-book",name:"随身听书公开源合集",version:"5.7",script:"",address:"",books:true)]
         store.liked = songs.prefix(4).map { MediaItem($0, source:"wy") }; store.followed = playlists.map { MediaItem($0, kind:"playlist") }; store.bookshelf = books.prefix(4).map { MediaItem($0, source:"fixture-source", kind:"book") }; store.message = nil
-        if ["player","lyrics","queue","song-menu"].contains(screen) || ProcessInfo.processInfo.arguments.contains("-ui-mini-player") { player.queue = store.liked; player.duration = 245; player.elapsed = 62; player.buffered = 160; player.status = "FLAC · 24 bit · 96 kHz"; player.lyricText = songs[0].string("lrc"); player.lyrics = LyricLine.parse(player.lyricText) }
+        if ["player","lyrics","queue","song-menu","player-menu"].contains(screen) || ProcessInfo.processInfo.arguments.contains("-ui-mini-player") { player.queue = store.liked; player.duration = 245; player.elapsed = 62; player.buffered = 160; player.status = "FLAC · 24 bit · 96 kHz"; player.lyricText = songs[0].string("lrc"); player.lyrics = LyricLine.parse(player.lyricText) }
         if player.current != nil { player.audioInfo = AudioStreamInfo(format: "FLAC", bitsPerSecond: 960000, sampleRate: 96000) }
         if ProcessInfo.processInfo.arguments.contains("-ui-mini-loading") { player.loading = true; player.publishResolution(ResolutionNotice(phase: .resolving, detail: "测试音源 · 网易云 · 320k")) }
     }
@@ -104,6 +107,7 @@ struct UITestScreen: View {
         case "player", "lyrics": Color.clear.onAppear { player.showPlayer = true }
         case "queue": QueueView()
         case "song-menu": SongActionsView(item:store.libraryItem(UITestFixtures.songs[0]))
+        case "player-menu": PlayerMenuView()
         default: HomeView()
         }
     }

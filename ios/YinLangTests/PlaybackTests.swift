@@ -10,6 +10,8 @@ private final class PlaybackServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "YinLang.PlaybackFixture")
     private let wave: Data
     private var connections: [NWConnection] = []
+    private var requests: [(target: String, ranged: Bool)] = []
+    func fullRequests(containing value: String) -> Int { queue.sync { requests.filter { $0.target.contains(value) && !$0.ranged }.count } }
     private(set) var port: UInt16 = 0
     var base: String { "http://127.0.0.1:\(port)" }
     init() throws {
@@ -53,6 +55,7 @@ private final class PlaybackServer: @unchecked Sendable {
     private func respond(_ connection: NWConnection, request: String) {
         let lines = request.components(separatedBy: "\r\n")
         let target = lines.first?.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+        requests.append((target, lines.contains { $0.lowercased().hasPrefix("range:") }))
         if target == "/stall" { return }
         let audio = target.hasPrefix("/audio.wav") || target.hasPrefix("/rest/stream.view")
         var body = audio ? wave : Data("{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\"}}".utf8)
@@ -73,6 +76,59 @@ private final class PlaybackServer: @unchecked Sendable {
 }
 
 final class PlaybackTests: XCTestCase {
+    @MainActor func testPreparseStartsAtSeventyPercentAndNextReusesVerifiedAddress() async throws { try await exercisePreparation(precache: false) }
+    @MainActor func testPrecacheWorksIndependentlyAndNextPlaysOffline() async throws { try await exercisePreparation(precache: true) }
+    @MainActor private func exercisePreparation(precache: Bool) async throws {
+        let server = try PlaybackServer(); try await server.start(); defer { server.stop() }
+        let store = AppStore(), player = Player(), defaults = UserDefaults.standard
+        let previousPlugins = store.plugins
+        let keys = [NextTrackSettings.parseKey, NextTrackSettings.cacheKey, "quality", "music-cache"]
+        let previous = Dictionary(uniqueKeysWithValues: keys.map { ($0, defaults.object(forKey: $0)) })
+        let scope = UUID().uuidString
+        let first = MediaItem(["id": scope + "-first", "name": "Current"], source: "wy")
+        let next = MediaItem(["id": scope + "-next", "name": "Next", "lrc": "[00:00]Next"], source: "wy")
+        let file = Disk.directory(Disk.cache.appendingPathComponent("music")).appendingPathComponent(Disk.hash(store.cacheKey(next, quality: "flac")))
+        defer {
+            while !player.queue.isEmpty { player.remove(0) }
+            store.invalidate(scope); store.plugins = previousPlugins
+            defaults.removeObject(forKey: scope + ":calls")
+            for key in keys { if let value = previous[key] ?? nil { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) } }
+            try? FileManager.default.removeItem(at: file)
+        }
+        defaults.set(!precache, forKey: NextTrackSettings.parseKey); defaults.set(precache, forKey: NextTrackSettings.cacheKey)
+        defaults.set("flac", forKey: "quality"); defaults.set(16, forKey: "music-cache")
+        let script = "let calls = 0; lx.on('request', () => { Native.put('calls', String(++calls)); return '\(server.base)/audio.wav?next=1'; }); lx.send('inited',{sources:{wy:{qualitys:['flac']}}});"
+        store.plugins = [Plugin(id: scope, name: "Next fixture", version: "1", script: script, address: "", books: false)]
+        player.attach(store); player.queue = [first, next]; player.index = 0; player.playing = true; player.duration = 100; player.elapsed = 69.99
+        player.prepareNextIfNeeded(); try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertNil(defaults.string(forKey: scope + ":calls"))
+        player.elapsed = 70; player.prepareNextIfNeeded()
+        for _ in 0..<100 {
+            if player.resolutionNotice?.phase == .success || player.resolutionNotice?.phase == .cached { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertEqual(defaults.string(forKey: scope + ":calls"), "1")
+        if precache {
+            for _ in 0..<100 {
+                if player.resolutionNotice?.phase == .cached { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            XCTAssertEqual(player.resolutionNotice?.phase, .cached)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+            XCTAssertEqual(server.fullRequests(containing: "next=1"), 1)
+            server.stop()
+        } else { XCTAssertEqual(server.fullRequests(containing: "next=1"), 0, "预解析不能下载整首音频") }
+        player.next()
+        for _ in 0..<150 {
+            if player.elapsed > 0.5 || store.message != nil { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertEqual(player.current?.id, next.id); XCTAssertNil(store.message, player.status)
+        XCTAssertGreaterThan(player.elapsed, 0.5, player.status)
+        XCTAssertEqual(defaults.string(forKey: scope + ":calls"), "1", "切歌必须复用已验证结果")
+        if precache { XCTAssertTrue(player.status.contains("离线缓存"), player.status) }
+    }
+    @MainActor func testCurrentAudioCachesNotifiesAndReplaysWithoutNetwork() async throws { try await exercisePlayback(library: false, cacheEnabled: true) }
     @MainActor func testAudioVerificationCancellationStopsWaitingForNetworkTimeout() async throws {
         let server = try PlaybackServer(); try await server.start(); defer { server.stop() }
         let task = Task { try await AudioProbe(quality: "flac").verify(URL(string: server.base + "/stall")!, headers: [:]) }
@@ -171,7 +227,7 @@ final class PlaybackTests: XCTestCase {
         try await exercisePlayback(library: true, cachedFile: Data("RIFF".utf8) + Data(repeating: 0, count: 128))
     }
 
-    @MainActor private func exercisePlayback(library: Bool, cachedFile: Data? = nil, switchFromBook: Bool = false) async throws {
+    @MainActor private func exercisePlayback(library: Bool, cachedFile: Data? = nil, switchFromBook: Bool = false, cacheEnabled: Bool = false) async throws {
         let server = try PlaybackServer(); try await server.start(); defer { server.stop() }
         let store = AppStore(), player = Player(), defaults = UserDefaults.standard
         let oldPlugins = store.plugins
@@ -204,7 +260,7 @@ final class PlaybackTests: XCTestCase {
             AudioEffects.shared.config = effects
         }
         defaults.removeObject(forKey: "nav-url"); defaults.removeObject(forKey: "nav-user")
-        defaults.set("flac", forKey: "quality"); defaults.set(0, forKey: "music-cache")
+        defaults.set("flac", forKey: "quality"); defaults.set(cacheEnabled ? 16 : 0, forKey: "music-cache")
         AudioEffects.shared.config.enabled = false
         store.plugins = []; store.downloads = []; store.message = nil; player.attach(store)
         if switchFromBook {
@@ -264,6 +320,23 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.audioInfo.sampleRate, 44100, accuracy: 1)
         XCTAssertGreaterThan(player.audioInfo.bitsPerSecond, 0)
         XCTAssertGreaterThan(player.duration, 1)
+        if cacheEnabled {
+            let file = Disk.directory(Disk.cache.appendingPathComponent("music")).appendingPathComponent(Disk.hash(store.cacheKey(item)))
+            seededCache = file
+            for _ in 0..<100 {
+                if player.resolutionNotice?.phase == .cached { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            XCTAssertEqual(player.resolutionNotice?.phase, .cached)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+            server.stop(); player.play([item])
+            for _ in 0..<150 {
+                if player.elapsed > 0.5 || store.message != nil { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            XCTAssertNil(store.message, player.status); XCTAssertGreaterThan(player.elapsed, 0.5, player.status)
+            XCTAssertEqual(player.status, "离线缓存")
+        }
         if switchFromBook { XCTAssertEqual(player.current?.id, item.id); XCTAssertEqual(player.speed, 1) }
         if let seededCache, let cachedFile { XCTAssertEqual(try Data(contentsOf: seededCache), cachedFile, "Playback recovery must preserve the existing cache") }
         XCTAssertEqual(AVAudioSession.sharedInstance().category, .playback)

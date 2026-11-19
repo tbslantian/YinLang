@@ -71,16 +71,37 @@ actor MediaCache {
                       !((http.mimeType ?? "").contains("text") || (http.mimeType ?? "").contains("json") || (http.mimeType ?? "").contains("mpegurl")) else { return nil }
                 let size = (try temp.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
                 guard size > 0, size <= limitMB * 1_048_576, Self.hasAudioData(temp),
-                      response.expectedContentLength <= 0 || Int64(size) == response.expectedContentLength,
-                      (try? await AVURLAsset(url: temp).load(.isPlayable)) == true else { return nil }
+                      response.expectedContentLength <= 0 || Int64(size) == response.expectedContentLength else { return nil }
+                // URLSession download files have an arbitrary .tmp suffix. Give
+                // AVFoundation the detected container before validating locally.
+                let staged = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(Self.audioExtension(temp, response: http, remote: url))
+                try FileManager.default.moveItem(at: temp, to: staged)
+                defer { try? FileManager.default.removeItem(at: staged) }
+                let asset = AVURLAsset(url: staged)
+                guard (try? await asset.load(.isPlayable)) == true,
+                      !(try await asset.loadTracks(withMediaType: .audio)).isEmpty else { return nil }
                 try Task.checkCancellation()
-                try FileManager.default.moveItem(at: temp, to: destination); return destination
+                try FileManager.default.moveItem(at: staged, to: destination); return destination
             } catch { return nil }
         }
         pending[pendingKey] = (id, task)
-        let result = await task.value
+        let result = await withTaskCancellationHandler(operation: { await task.value }, onCancel: { task.cancel() })
         if pending[pendingKey]?.id == id { pending.removeValue(forKey: pendingKey) }
         trim(books: books, limitMB: limitMB); return result
+    }
+    private static func audioExtension(_ file: URL, response: HTTPURLResponse, remote: URL) -> String {
+        let handle = try? FileHandle(forReadingFrom: file)
+        defer { try? handle?.close() }
+        let bytes = (try? handle?.read(upToCount: 16)) ?? Data()
+        if bytes.starts(with: Data("fLaC".utf8)) { return "flac" }
+        if bytes.starts(with: Data("RIFF".utf8)) { return "wav" }
+        if bytes.count >= 8, String(decoding: bytes[4..<8], as: UTF8.self) == "ftyp" { return "m4a" }
+        let mime = response.mimeType ?? ""
+        if mime.contains("aac") { return "aac" }
+        if mime.contains("flac") { return "flac" }
+        if mime.contains("mp4") { return "m4a" }
+        if ["mp3", "flac", "wav", "m4a", "aac", "aiff", "caf"].contains(remote.pathExtension.lowercased()) { return remote.pathExtension.lowercased() }
+        return "mp3"
     }
     func trim(books: Bool, limitMB: Int) {
         let files = (try? FileManager.default.contentsOfDirectory(at: folder(books), includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])) ?? []

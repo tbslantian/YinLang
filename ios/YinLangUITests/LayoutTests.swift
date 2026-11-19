@@ -221,7 +221,10 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["song-rank-1"].firstMatch.label, "1")
         XCTAssertEqual(app.staticTexts["song-rank-4"].firstMatch.label, "4")
         let row = app.descendants(matching: .any).matching(identifier: "queue-row-1").firstMatch
-        row.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).press(forDuration: 0.05, thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)))
+        let current = app.images["queue-current-wy:song:song-1"].firstMatch
+        XCTAssertTrue(current.exists)
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.5)).press(forDuration: 0.05, thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)))
+        XCTAssertTrue(current.exists, "左滑不能切换当前歌曲")
         let remove = app.buttons["queue-remove-1"].firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 5)); remove.tap()
         XCTAssertTrue(app.staticTexts["page-title-播放队列（3）"].waitForExistence(timeout: 5))
@@ -229,6 +232,61 @@ final class LayoutTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["风继续吹 · 1"].exists)
         XCTAssertEqual(app.staticTexts["song-rank-1"].firstMatch.label, "1")
         XCTAssertFalse(app.staticTexts["song-rank-4"].exists)
+        XCTAssertTrue(current.exists, "移除非当前歌曲不能触发播放")
+        XCTAssertFalse(app.alerts["音浪"].exists)
+    }
+    @MainActor func testMiniPlayerAlwaysShowsCoverToggleAndAdjacentTrackButtons() throws {
+        let app = launch("music", extraArguments: ["-ui-mini-player"])
+        let toggle = app.buttons["mini-play-pause"].firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 8))
+        let wait = XCTNSPredicateExpectation(predicate: NSPredicate(value: false), object: nil)
+        _ = XCTWaiter.wait(for: [wait], timeout: 3)
+        XCTAssertTrue(toggle.isHittable); XCTAssertEqual(toggle.label, "播放")
+        let previous = app.buttons["mini-previous"].firstMatch, next = app.buttons["mini-next"].firstMatch, queue = app.buttons["mini-queue"].firstMatch
+        for button in [previous, next, queue] { XCTAssertTrue(button.isHittable); XCTAssertGreaterThanOrEqual(button.frame.width, 44) }
+        XCTAssertLessThanOrEqual(previous.frame.maxX, next.frame.minX + 1)
+        XCTAssertLessThanOrEqual(next.frame.maxX, queue.frame.minX + 1)
+        XCTAssertGreaterThan(app.buttons["mini-open-player"].firstMatch.frame.width, 70)
+        capture("mini-player-transport-controls")
+    }
+    @MainActor func testPlayerMenuOnlyOpensFromEllipsisAndUsesAndroidOrder() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch("player")
+        let stage = app.descendants(matching: .any).matching(identifier: "player-artwork-stage").firstMatch
+        XCTAssertTrue(stage.waitForExistence(timeout: 8))
+        stage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertFalse(app.buttons["关闭播放器菜单"].exists)
+        XCTAssertEqual(app.buttons["player-previous"].frame.midX, app.buttons["player-mode"].frame.midX, accuracy: 1)
+        XCTAssertEqual(app.buttons["player-next"].frame.midX, app.buttons["player-cast"].frame.midX, accuracy: 1)
+        app.buttons["播放器菜单"].tap()
+        let close = app.buttons["关闭播放器菜单"].firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 8))
+        let actionNames = ["播放模式", "播放速度", "播放队列", "定时关闭"]
+        let first = app.buttons[actionNames[0]].firstMatch
+        for name in actionNames { XCTAssertEqual(app.buttons[name].firstMatch.frame.minY, first.frame.minY, accuracy: 1) }
+        let rows = ["下载到手机", "推送到服务端下载", "投送", "播放器样式", "音质", "音效", "播放设置"]
+        var lastY = first.frame.maxY
+        for name in rows {
+            let button = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+            XCTAssertTrue(button.exists, name)
+            XCTAssertGreaterThanOrEqual(button.frame.minY, lastY - 1, name); lastY = button.frame.maxY
+        }
+        capture("player-menu-android-order")
+        close.tap()
+        XCTAssertFalse(close.exists)
+    }
+    @MainActor func testMusicPreparationSwitchDefaultsAndPersistence() throws {
+        var app = launch("plugins", extraArguments: ["-ui-reset-next-settings"])
+        let parse = app.buttons["music-preparse-next"].firstMatch, cache = app.buttons["music-precache-next"].firstMatch
+        XCTAssertTrue(parse.waitForExistence(timeout: 8)); XCTAssertTrue(cache.exists)
+        XCTAssertEqual(parse.value as? String, "已启用"); XCTAssertEqual(cache.value as? String, "已停用")
+        parse.tap(); cache.tap(); app.terminate()
+        app = launch("plugins")
+        let restoredParse = app.buttons["music-preparse-next"].firstMatch, restoredCache = app.buttons["music-precache-next"].firstMatch
+        XCTAssertTrue(restoredParse.waitForExistence(timeout: 8))
+        XCTAssertEqual(restoredParse.value as? String, "已停用"); XCTAssertEqual(restoredCache.value as? String, "已启用")
+        capture("music-preparation-settings")
+        restoredParse.tap(); restoredCache.tap()
     }
     @MainActor private func assertLibraryNavigationLayout(_ app: XCUIApplication) {
         let count = app.staticTexts["library-song-count"].firstMatch

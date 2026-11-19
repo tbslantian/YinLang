@@ -3,6 +3,33 @@ import Network
 @testable import YinLang
 
 final class CoreTests: XCTestCase {
+    func testNavidromeCoverURLStaysStableAndSeparatesCredentials() throws {
+        let base = "https://" + UUID().uuidString + ".example.com"
+        let account = Navidrome(base: base, user: "first", password: "secret")
+        let cover = account.cover("album", size: 400)
+        for _ in 0..<20 { XCTAssertEqual(Navidrome(base: base, user: "first", password: "secret").cover("album", size: 400), cover) }
+        XCTAssertNotEqual(Navidrome(base: base, user: "second", password: "secret").cover("album"), cover)
+        XCTAssertNotEqual(Navidrome(base: base, user: "first", password: "changed").cover("album"), cover)
+        XCTAssertNotEqual(account.cover("other"), cover)
+        XCTAssertNotEqual(account.cover("album", size: 800), cover)
+        XCTAssertEqual(account.cover(""), "")
+    }
+    func testNextTrackPreparationDefaultsAndSeventyPercentBoundary() throws {
+        let name = "next-track-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let initial = NextTrackSettings(defaults: defaults)
+        XCTAssertTrue(initial.preparse); XCTAssertFalse(initial.precache)
+        XCTAssertFalse(initial.shouldStart(elapsed: 69.99, duration: 100))
+        XCTAssertTrue(initial.shouldStart(elapsed: 70, duration: 100))
+        XCTAssertFalse(initial.shouldStart(elapsed: 70, duration: 0))
+        XCTAssertFalse(initial.shouldStart(elapsed: .infinity, duration: 100))
+        defaults.set(false, forKey: NextTrackSettings.parseKey)
+        XCTAssertFalse(NextTrackSettings(defaults: defaults).enabled)
+        defaults.set(true, forKey: NextTrackSettings.cacheKey)
+        XCTAssertTrue(NextTrackSettings(defaults: defaults).enabled)
+        XCTAssertTrue(NextTrackSettings(defaults: defaults).shouldStart(elapsed: 70, duration: 100))
+    }
     func testAudioParametersKeepUnitsAndActualValues() {
         XCTAssertEqual(AudioStreamInfo(format: "MP3", bitsPerSecond: 320000, sampleRate: 44100).text, "MP3 · 320 kbps · 44.1 kHz")
         XCTAssertEqual(AudioStreamInfo(format: "FLAC", bitsPerSecond: 1411200, sampleRate: 96000).text, "FLAC · 1411.2 kbps · 96 kHz")

@@ -55,13 +55,13 @@ jobs:
           mkdir -p ios/build/package/Payload
           cp -R ios/build/YinLang.xcarchive/Products/Applications/YinLang.app ios/build/package/Payload/
           cd ios/build/package
-          /usr/bin/zip -qry ../YinLang-0.8.5-unsigned.ipa Payload
+          /usr/bin/zip -qry ../YinLang-0.8.6-unsigned.ipa Payload
           cd ..
-          shasum -a 256 YinLang-0.8.5-unsigned.ipa > SHA256SUMS.txt
+          shasum -a 256 YinLang-0.8.6-unsigned.ipa > SHA256SUMS.txt
           python3 - <<'PY'
           import hashlib, json, os, plistlib
           from pathlib import Path
-          ipa = Path('YinLang-0.8.5-unsigned.ipa')
+          ipa = Path('YinLang-0.8.6-unsigned.ipa')
           info = plistlib.loads(Path('YinLang.xcarchive/Products/Applications/YinLang.app/Info.plist').read_bytes())
           # SideStore versions affected by non-ASCII appIdName must see an ASCII name.
           for key in ['CFBundleDisplayName', 'CFBundleName']:

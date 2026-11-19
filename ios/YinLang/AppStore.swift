@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppStore: ObservableObject {
-    @Published var plugins: [Plugin] = (Disk.read("plugins.json", fallback: []) as [Plugin]).map(PluginArchive.restoreMusicMetadata) { didSet { Disk.save(plugins, "plugins.json") } }
+    @Published var plugins: [Plugin] = (Disk.read("plugins.json", fallback: []) as [Plugin]).map(PluginArchive.restoreMusicMetadata) { didSet { Disk.save(plugins, "plugins.json"); resolutionRevision += 1 } }
+    private(set) var resolutionRevision = 0
     @Published var liked: [MediaItem] = Disk.read("liked.json", fallback: []) { didSet { Disk.save(liked, "liked.json") } }
     @Published var followed: [MediaItem] = Disk.read("followed.json", fallback: []) { didSet { Disk.save(followed, "followed.json") } }
     @Published var bookshelf: [MediaItem] = Disk.read("bookshelf.json", fallback: []) { didSet { Disk.save(bookshelf, "bookshelf.json") } }
@@ -159,7 +160,19 @@ final class AppStore: ObservableObject {
         return try await runtime.call("bookCall(\(quote(source)),\(quote(action)),\(jsonText(args)))")
     }
     func cacheKey(_ item: MediaItem, quality: String? = nil) -> String {
-        item.id + (item.source == "library" ? ":\(nav?.identity ?? ""):\(defaults.string(forKey: "nav-bitrate") ?? "0"):\(defaults.string(forKey: "nav-format") ?? "mp3")" : item.kind == "episode" ? "" : ":\(quality ?? defaults.string(forKey: "quality") ?? "320k")")
+        if item.source == "library", let nav {
+            let settings = nav.playbackSettings()
+            return item.id + ":\(nav.identity):\(settings.bitrate):\(settings.format)"
+        }
+        return item.id + (item.kind == "episode" ? "" : ":\(quality ?? defaults.string(forKey: "quality") ?? "320k")")
+    }
+    var resolutionConfiguration: String {
+        jsonText([String(resolutionRevision), String(connectionRevision), nav.map { $0.playbackSettings().bitrate } ?? ""] + ["quality", "nav-url", "nav-user", "nav-bitrate", "nav-bitrate-wifi", "nav-bitrate-mobile", "nav-format"].map { defaults.string(forKey: $0) ?? "" })
+    }
+    func cacheResolved(_ item: MediaItem, url: URL, headers: [String: String], source: String) async -> URL? {
+        let actualQuality = item.kind == "song" && item.source != "library" ? source.components(separatedBy: " · ").last : nil
+        let limit = defaults.object(forKey: item.kind == "episode" ? "book-cache" : "music-cache") as? Int ?? 512
+        return await MediaCache.shared.store(cacheKey(item, quality: actualQuality), url: url, headers: headers, books: item.kind == "episode", limitMB: limit)
     }
     func resolve(_ item: MediaItem, fallback: Bool = true, useLocal: Bool = true, quality requestedQuality: String? = nil, progress: ((ResolutionNotice) -> Void)? = nil) async throws -> (URL, [String: String], String) {
         try Task.checkCancellation()

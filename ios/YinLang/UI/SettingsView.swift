@@ -155,7 +155,8 @@ struct AboutView: View {
 
 struct QualityPicker: View {
     @Binding var quality: String
-    var body: some View { AndroidChoice(title: "在线播放音质", selection: $quality, options: [("128k", "标准 128k"), ("192k", "较高 192k"), ("320k", "高品质 320k"), ("flac", "无损 FLAC"), ("flac24bit", "24 bit FLAC"), ("hires", "Hi-Res"), ("atmos", "全景声"), ("atmos_plus", "全景声 Plus"), ("master", "母带")]) }
+    static let options = [("128k", "标准 128k"), ("192k", "较高 192k"), ("320k", "高品质 320k"), ("flac", "无损 FLAC"), ("flac24bit", "24 bit FLAC"), ("hires", "Hi-Res"), ("atmos", "全景声"), ("atmos_plus", "全景声 Plus"), ("master", "母带")]
+    var body: some View { AndroidChoice(title: "在线播放音质", selection: $quality, options: Self.options) }
 }
 
 struct ConnectionView: View {
@@ -207,9 +208,20 @@ struct PluginSettingsView: View {
     @AppStorage("quality") private var quality = "320k"
     @AppStorage("auto-source-updates") private var autoUpdates = false
     @AppStorage("playlist-update-hours") private var updateHours = 6
+    @AppStorage(NextTrackSettings.parseKey) private var preparse = true
+    @AppStorage(NextTrackSettings.cacheKey) private var precache = false
     var body: some View {
         AndroidForm {
             if !books { AndroidSection("在线播放") { QualityPicker(quality: $quality); Text("播放会在所选音质失败后逐级回退；下载使用所选档位。").font(.caption).foregroundStyle(Palette.muted) } }
+            if !books {
+                AndroidSection("下一首准备") {
+                    Toggle("预解析下一首", isOn: $preparse).accessibilityIdentifier("music-preparse-next")
+                    Text("当前歌曲播放到 70% 后解析下一首，切歌时复用已验证的地址。").font(.caption).foregroundStyle(Palette.muted)
+                    Toggle("预缓存下一首", isOn: $precache).accessibilityIdentifier("music-precache-next")
+                    Text("当前歌曲播放到 70% 后缓存下一首音频，可独立开启；会使用网络和音乐缓存空间。").font(.caption).foregroundStyle(Palette.muted)
+                    NavigationLink { CacheSettingsView() } label: { AndroidRow(title: "缓存管理", icon: "externaldrive") }.buttonStyle(.plain)
+                }
+            }
             AndroidSection("导入\(books ? "听书 ZIP 插件" : "LX JavaScript 音源")") {
                 Button("从文件导入", systemImage: "doc.badge.plus") { filePicker = true }
                 TextField("更新或导入直链", text: $address).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
