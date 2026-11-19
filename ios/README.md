@@ -4,7 +4,11 @@
 
 ## 0.8.5 播放与布局修复
 
-构建号 8：播放器参数行读取实际音轨的格式、码率和采样率；系统估算码率缺失时，PCM 使用音轨描述计算实际码率。解析过程使用安卓样式浮动通知，成功提示保留 2 秒。音源按需串行调用，验证通过立即返回，不启动后续音源；取消播放时终止验证请求。修复 UI 自动化的容器标识覆盖、部分可见按钮点击及尺寸比较容差，并修正测试账号准备与页面加载的时序。通过 GitHub Actions 进行设备编译及 iPhone / iPad 模拟器验证，实际结果以对应构建记录为准。
+构建号 8：播放器参数行读取实际音轨的格式、码率和采样率；系统估算码率缺失时，PCM 使用音轨描述计算实际码率。解析过程使用安卓样式浮动通知，成功提示保留 2 秒。音源按需串行调用，验证通过立即返回，不启动后续音源；取消播放时终止验证请求。修复 UI 自动化的容器标识覆盖、部分可见按钮点击及尺寸比较容差，并修正测试账号准备与页面加载的时序。
+
+2026-11-19 验证：设备 Release archive 与未签名通用 IPA 已生成。iPhone 的 19 项基础、14 项播放、11 项 UI 测试在[手机运行](https://github.com/tbslantian/YinLang/actions/runs/44529753976)中全部通过；该任务后续在 iPad 阶段触及原 45 分钟上限。[平板运行](https://github.com/tbslantian/YinLang/actions/runs/44536227684)通过 14 项播放与 10 项 UI 测试，剩余分页用例截图已证实第二页加载成功，但旧按钮消失断言失败。改为检查第二页歌曲后，[单项回归及最新设备包构建](https://github.com/tbslantian/YinLang/actions/runs/44541842771)通过。三轮之间 Release 应用逻辑相同，后续仅更新构建流程、文档和 Debug 测试夹具/断言。未进行真机与实际第三方服务验收。
+
+直接下载 [0.8.5 未签名 IPA](https://github.com/tbslantian/YinLang/releases/download/ios-v0.8.5/YinLang-0.8.5-unsigned.ipa)，签名后安装；校验文件和完整说明见 [Release](https://github.com/tbslantian/YinLang/releases/tag/ios-v0.8.5)。
 
 ## 安卓界面风格同步
 
