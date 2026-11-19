@@ -81,7 +81,7 @@ struct UITestScreen: View {
         case "server": ServerSettingsView()
         case "about": AboutView()
         case "effects": EffectsView()
-        case "player", "lyrics": PlayerView()
+        case "player", "lyrics": Color.clear.onAppear { player.showPlayer = true }
         case "queue": QueueView()
         case "song-menu": SongActionsView(item:store.libraryItem(UITestFixtures.songs[0]))
         default: HomeView()

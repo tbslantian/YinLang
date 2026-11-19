@@ -88,6 +88,13 @@ jobs:
               xcrun xcresulttool export attachments --path "ios/build/$device.xcresult" --output-path "ios/build/screenshots/$device" || true
             fi
           done
+      - name: Upload layout screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: YinLang-iOS-layout-screenshots
+          retention-days: 30
+          path: ios/build/screenshots/
       - name: Upload unsigned IPA, archive and test reports
         if: always()
         uses: actions/upload-artifact@v4
