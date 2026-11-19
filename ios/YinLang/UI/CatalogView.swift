@@ -19,6 +19,7 @@ struct CatalogView: View {
     @State private var generation = UUID()
     @State private var link = ""
     @State private var showLink = false
+    @State private var linkedPlaylist: MediaItem?
     var title: String { mode == "search" ? "搜索音乐" : mode == "charts" ? "在线排行榜" : "在线歌单" }
     var body: some View {
         ScrollView {
@@ -57,6 +58,7 @@ struct CatalogView: View {
             .searchable(text: $query, prompt: mode == "charts" ? "搜索榜名" : "关键词")
             .onSubmit(of: .search) { if mode != "charts" { Task { await reload() } } }
             .refreshable { await reload(refresh: true) }
+            .navigationDestination(item: $linkedPlaylist) { item in CatalogDetailView(item: item, chart: false) }
             .task { if rows.isEmpty && mode != "search" { await reload(); await loadTags() } }
             .alert("打开歌单", isPresented: $showLink) {
                 TextField("歌单 ID 或链接", text: $link)
@@ -92,14 +94,8 @@ struct CatalogView: View {
         tags = flatten(result)
     }
     private func openLink() {
-        guard platform != "all" else { store.message = "请先选择具体音乐平台"; return }
-        var id = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let components = URLComponents(string: id), components.host != nil {
-            id = components.queryItems?.first(where: { ["id", "disstid", "specialid"].contains($0.name) })?.value ?? components.url?.lastPathComponent ?? id
-        }
-        guard !id.isEmpty else { return }
-        let item = MediaItem(["id": id, "name": "分享歌单", "source": platform], kind: "playlist")
-        store.toggleFollow(item); store.message = "已加入关注的歌单，可从音乐页打开"
+        do { linkedPlaylist = try PlaylistLink.item(link, platform: platform) }
+        catch { store.message = error.localizedDescription }
     }
 }
 
@@ -131,7 +127,7 @@ struct CatalogDetailView: View {
         guard !loading else { return }; loading = true; error = ""; defer { loading = false }
         do {
             let requested = next ? page + 1 : 1
-            let result = try await store.catalog(chart ? "chart" : "list", ["source": item.source, "id": item.key, "page": requested], refresh: refresh)
+            let result = try await store.catalog(chart ? "chart" : "list", ["source": item.source, "id": item.catalogID, "page": requested], refresh: refresh)
             let items = result.rows("list").map { MediaItem($0) }
             if !next { rows = [] }; let ids = Set(rows.map(\.id)); rows += items.filter { !ids.contains($0.id) }; page = requested; more = result["more"] as? Bool ?? false
         } catch { self.error = error.localizedDescription }

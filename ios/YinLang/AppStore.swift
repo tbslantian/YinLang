@@ -103,7 +103,7 @@ final class AppStore: ObservableObject {
         if !failures.isEmpty { message = failures.joined(separator: "\n") }
     }
     func refreshFollowed() async {
-        for item in followed { _ = try? await catalog(item.kind == "chart" ? "chart" : "list", ["source": item.source, "id": item.key, "page": 1], refresh: true) }
+        for item in followed { _ = try? await catalog(item.kind == "chart" ? "chart" : "list", ["source": item.source, "id": item.catalogID, "page": 1], refresh: true) }
         if let nav { _ = try? await nav.get("getPlaylists") }
         defaults.set(Date(), forKey: "playlist-update-date")
     }
@@ -145,11 +145,11 @@ final class AppStore: ObservableObject {
     func cacheKey(_ item: MediaItem, quality: String? = nil) -> String {
         item.id + (item.source == "library" ? ":\(nav?.identity ?? ""):\(defaults.string(forKey: "nav-bitrate") ?? "0"):\(defaults.string(forKey: "nav-format") ?? "mp3")" : item.kind == "episode" ? "" : ":\(quality ?? defaults.string(forKey: "quality") ?? "320k")")
     }
-    func resolve(_ item: MediaItem, fallback: Bool = true) async throws -> (URL, [String: String], String) {
+    func resolve(_ item: MediaItem, fallback: Bool = true, useLocal: Bool = true, quality requestedQuality: String? = nil) async throws -> (URL, [String: String], String) {
         if item.source == "library", item.raw.string("_account") != nav?.identity { throw AppFailure.message("音乐库账号已变更，请从当前音乐库选择歌曲") }
-        if let download = downloads.first(where: { $0.item.id == item.id }), FileManager.default.fileExists(atPath: Disk.documents.appendingPathComponent(download.filename).path) { return (Disk.documents.appendingPathComponent(download.filename), [:], "本机下载") }
-        if let cached = await MediaCache.shared.cached(cacheKey(item), books: item.kind == "episode") { return (cached, [:], "离线缓存") }
-        if fallback && item.kind == "song" && item.source != "library" {
+        if useLocal, let download = downloads.first(where: { $0.item.id == item.id }), FileManager.default.fileExists(atPath: Disk.documents.appendingPathComponent(download.filename).path) { return (Disk.documents.appendingPathComponent(download.filename), [:], "本机下载") }
+        if useLocal, let cached = await MediaCache.shared.cached(cacheKey(item, quality: requestedQuality), books: item.kind == "episode") { return (cached, [:], "离线缓存") }
+        if useLocal && fallback && item.kind == "song" && item.source != "library" {
             for quality in ["master", "atmos_plus", "atmos", "hires", "flac24bit", "flac", "320k", "192k", "128k"] {
                 if let cached = await MediaCache.shared.cached(cacheKey(item, quality: quality), books: false) { return (cached, [:], "离线缓存 · " + quality) }
             }
@@ -161,7 +161,7 @@ final class AppStore: ObservableObject {
             let result = try await bookCall(item.source, pluginID: item.raw.string("_plugin"), action: "audio", args: [item.key]) as? JSONObject ?? [:]
             guard let url = URL(string: result.string("url")) else { throw AppFailure.message("插件没有返回音频地址") }; return (url, result["headers"] as? [String: String] ?? [:], "听书插件")
         }
-        let quality = defaults.string(forKey: "quality") ?? "320k"
+        let quality = requestedQuality ?? defaults.string(forKey: "quality") ?? "320k"
         let ladder = ["master", "atmos_plus", "atmos", "hires", "flac24bit", "flac", "320k", "192k", "128k"]
         let qualities = fallback ? Array(ladder.dropFirst(ladder.firstIndex(of: quality) ?? 6)) : [quality]
         let sources = plugins.filter { !$0.books && $0.enabled }
@@ -189,7 +189,7 @@ final class AppStore: ObservableObject {
                         do {
                             activity = "\(plugin.name) · \(Platform(rawValue: platform)?.title ?? platform) · \(quality)"
                             let runtime = try await runtime(plugin.id, scripts: plugin.script)
-                            let result = try await runtime.call("lxResolve(\(quote(platform)),\(quote(quality)),\(jsonText(candidate.raw)))", timeout: 35) as? JSONObject ?? [:]
+                            let result = try await runtime.call("lxResolve(\(quote(platform)),\(quote(quality)),\(jsonText(candidate.onlineMusicInfo)))", timeout: 35) as? JSONObject ?? [:]
                             guard let url = URL(string: result.string("url")), ["http", "https"].contains(url.scheme ?? "") else { continue }
                             let headers = result["headers"] as? [String: String] ?? [:]
                             try await AudioProbe(quality: quality).verify(url, headers: headers); try Task.checkCancellation()
@@ -203,14 +203,19 @@ final class AppStore: ObservableObject {
     }
     func lyrics(_ item: MediaItem) async -> String {
         if item.source == "library" { return await nav?.lyrics(item) ?? "" }
-        return (try? await catalog("lyric", ["source": item.source, "music": item.raw]).string("lyric")) ?? ""
+        let embedded = item.raw.string("lrc")
+        if !embedded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !embedded.hasPrefix("http") { return embedded }
+        return (try? await catalog("lyric", ["source": item.source, "music": item.onlineMusicInfo]).string("lyric")) ?? ""
     }
     func download(_ item: MediaItem) async {
         guard item.kind == "song", !downloading.contains(item.id) else { return }; downloading.insert(item.id); defer { downloading.remove(item.id) }
         do {
+            let quality = defaults.string(forKey: "quality") ?? "320k"
             let resolved: (URL, [String: String], String)
-            if item.source == "library", let nav { resolved = (try nav.stream(item, original: true), [:], "Navidrome") }
-            else { resolved = try await resolve(item, fallback: false) }
+            if item.source == "library" {
+                guard let nav, item.raw.string("_account") == nav.identity else { throw AppFailure.message("音乐库账号已变更，请从当前音乐库选择歌曲") }
+                resolved = (try nav.stream(item, original: true), [:], "Navidrome")
+            } else { resolved = try await resolve(item, fallback: false, useLocal: false, quality: quality) }
             var request = URLRequest(url: resolved.0); request.allHTTPHeaderFields = resolved.1
             let temp: URL
             if resolved.0.isFileURL { temp = resolved.0 }
@@ -226,9 +231,14 @@ final class AppStore: ObservableObject {
             else if header.count >= 8 && String(decoding: header[4..<8], as: UTF8.self) == "ftyp" { ext = "m4a" }
             else if header.starts(with: Data("ID3".utf8)) || (header.count >= 2 && header[0] == 255 && header[1] & 224 == 224) { ext = "mp3" }
             else { throw AppFailure.message("下载格式暂不支持；HLS 请使用服务器下载") }
-            let filename = Disk.hash(item.id) + "." + ext; let target = Disk.documents.appendingPathComponent(filename)
-            if !FileManager.default.fileExists(atPath: target.path) { try FileManager.default.copyItem(at: temp, to: target) }
-            downloads.removeAll { $0.item.id == item.id }; downloads.append(.init(item: item, filename: filename)); message = "已保存到本机"
+            // Write the replacement before retiring the previous download, including same-format upgrades.
+            let filename = Disk.hash(item.id) + "-" + UUID().uuidString + "." + ext
+            let target = Disk.documents.appendingPathComponent(filename)
+            try FileManager.default.copyItem(at: temp, to: target)
+            let previous = downloads.filter { $0.item.id == item.id }
+            downloads.removeAll { $0.item.id == item.id }; downloads.append(.init(item: item, filename: filename))
+            for old in previous { try? FileManager.default.removeItem(at: Disk.documents.appendingPathComponent(old.filename)) }
+            message = "已保存到本机"
         } catch { message = error.localizedDescription }
     }
     func deleteDownload(_ id: String) { if let item = downloads.first(where: { $0.id == id }) { try? FileManager.default.removeItem(at: Disk.documents.appendingPathComponent(item.filename)); downloads.removeAll { $0.id == id } } }
@@ -242,7 +252,7 @@ final class AppStore: ObservableObject {
     }
     func push(_ item: MediaItem) async {
         do {
-            let (url, headers, _) = try await resolve(item, fallback: false)
+            let (url, headers, _) = try await resolve(item, fallback: false, useLocal: false)
             guard !url.isFileURL else { throw AppFailure.message("当前文件只有本机地址，请从在线列表选择歌曲") }
             _ = try await server("/v1/jobs", method: "POST", body: ["kind": "music", "url": url.absoluteString, "headers": headers, "title": item.title, "artist": item.subtitle, "quality": defaults.string(forKey: "quality") ?? "320k", "album": item.raw.string("albumName", "album")])
             message = "已推送到服务器"

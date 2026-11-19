@@ -41,9 +41,17 @@ jobs:
           mkdir -p ios/build/package/Payload
           cp -R ios/build/YinLang.xcarchive/Products/Applications/YinLang.app ios/build/package/Payload/
           cd ios/build/package
-          /usr/bin/zip -qry ../YinLang-0.8.0-unsigned.ipa Payload
+          /usr/bin/zip -qry ../YinLang-0.8.1-unsigned.ipa Payload
           cd ..
-          shasum -a 256 YinLang-0.8.0-unsigned.ipa > SHA256SUMS.txt
+          shasum -a 256 YinLang-0.8.1-unsigned.ipa > SHA256SUMS.txt
+          python3 - <<'PY'
+          import hashlib, json, os, plistlib
+          from pathlib import Path
+          ipa = Path('YinLang-0.8.1-unsigned.ipa')
+          info = plistlib.loads(Path('YinLang.xcarchive/Products/Applications/YinLang.app/Info.plist').read_bytes())
+          result = dict(commit=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'], version=info['CFBundleShortVersionString'], build=info['CFBundleVersion'], devices=info['UIDeviceFamily'], minimumOS=info['MinimumOSVersion'], unsigned=True, sha256=hashlib.sha256(ipa.read_bytes()).hexdigest(), bytes=ipa.stat().st_size)
+          Path('build-verification.json').write_text(json.dumps(result, indent=2) + '\n')
+          PY
       - name: Select available phone and tablet simulators
         run: |
           python3 - <<'PY'
@@ -59,11 +67,16 @@ jobs:
       - name: Test on iPhone
         run: |
           set -o pipefail
-          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$PHONE_ID" -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPhone.xcresult CODE_SIGNING_ALLOWED=NO test | tee ios-iphone-test.log
+          xcrun simctl boot "$PHONE_ID" || true
+          xcrun simctl bootstatus "$PHONE_ID" -b
+          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$PHONE_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPhone.xcresult CODE_SIGNING_ALLOWED=NO test | tee ios-iphone-test.log
       - name: Test on iPad
         run: |
           set -o pipefail
-          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$TABLET_ID" -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPad.xcresult -only-testing:YinLangUITests CODE_SIGNING_ALLOWED=NO test | tee ios-ipad-test.log
+          xcrun simctl shutdown "$PHONE_ID" || true
+          xcrun simctl boot "$TABLET_ID" || true
+          xcrun simctl bootstatus "$TABLET_ID" -b
+          xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$TABLET_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPad.xcresult -only-testing:YinLangUITests CODE_SIGNING_ALLOWED=NO test | tee ios-ipad-test.log
       - name: Export layout screenshots
         if: always()
         run: |
@@ -81,6 +94,7 @@ jobs:
           path: |
             ios/build/*.ipa
             ios/build/SHA256SUMS.txt
+            ios/build/build-verification.json
             ios/build/*.xcarchive
             ios/build/*.xcresult
             ios/build/screenshots/

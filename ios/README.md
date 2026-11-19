@@ -2,6 +2,17 @@
 
 原生 SwiftUI 通用应用，最低 iOS / iPadOS 17。iPhone 使用导航页面，iPad 使用可折叠侧栏，支持横竖屏和可调整窗口。首页默认经典影像，直接复用安卓版 `home_music_light/dark`、`home_books_light/dark` 原图。
 
+## 0.8.1 修复
+
+- 五平台排行榜详情、首页榜首封面和已关注榜单更新改用 `bangid`，兼容旧收藏身份。
+- 继续收听重新取得整本章节并定位上次章节，保留后续自动续播，兼容 0.8.0 进度。
+- 分享链接直接打开歌单，不再自动改变关注；支持网易 fragment ID、分享文字中的链接及平台适配器短链解析。
+- 音乐库随心听及随机专辑“全部”复用当前推荐快照，专辑后续分页从快照结束位置继续。
+- 重新下载按所选档位重新解析，成功保存后替换旧下载；服务器推送不再被本地缓存截断。下载失败保留原文件。
+- LX 解析与歌词补齐根字段 / `meta` 字段，内嵌歌词直接复用。
+
+这些修复不等于完成全部安卓功能与 UI 对齐；其余差异见 [一致性审计](PARITY_AUDIT.md)。
+
 ## 构建
 
 GitHub Actions 的 **iOS universal unsigned build** 在 macOS 上生成设备 archive、未签名 IPA，并在 iPhone / iPad 模拟器上运行测试。构建产物 `YinLang-iOS-unsigned` 包含 IPA、SHA256 校验值、Xcode archive、测试结果和日志。未签名 IPA 需要自行签名后安装，无需将证书或 Apple ID 写入仓库。

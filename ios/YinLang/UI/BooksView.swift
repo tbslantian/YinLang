@@ -16,7 +16,7 @@ struct BooksView: View {
                         NavigationLink { BookSettingsView() } label: { small("听书设置", icon: "slider.horizontal.3") }
                     }
                 }
-                if let current = store.nowBook { SectionTitle(title: "继续收听"); SongRow(item: current) { player.play([current]) }.padding(12).background(.background, in: RoundedRectangle(cornerRadius: 15)) }
+                if let current = store.nowBook { SectionTitle(title: "继续收听"); SongRow(item: current) { player.resumeBook(current) }.padding(12).background(.background, in: RoundedRectangle(cornerRadius: 15)) }
                 SectionTitle(title: "收藏的有声书")
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 130))], spacing: 18) {
                     ForEach(store.bookshelf) { book in NavigationLink { BookDetailView(book: book) } label: { VStack(alignment: .leading, spacing: 8) { Artwork(item: book, size: 130); Text(book.title).font(.subheadline).foregroundStyle(.primary).lineLimit(2) }.frame(maxWidth: .infinity, alignment: .leading) } }
@@ -138,7 +138,7 @@ struct BookDetailView: View {
         do {
             let detail = try await store.bookCall(book.source, pluginID: book.raw.string("_plugin"), action: "bookDetail", args: [book.key, true, true]) as? JSONObject ?? [:]
             description = detail.string("description", "intro")
-            episodes = detail.rows("episodes").map { row in var row = row; row["_plugin"] = book.raw.string("_plugin"); row["_book"] = book.id; row["coverUrl"] = book.cover; row["artist"] = book.title; return MediaItem(row, source: book.source, kind: "episode") }
+            episodes = BookPlayback.episodes(detail, book: book)
         } catch { self.error = error.localizedDescription }
     }
 }

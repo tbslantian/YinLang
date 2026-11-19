@@ -31,6 +31,7 @@ final class Player: ObservableObject {
     private var itemObservation: NSKeyValueObservation?
     private var load: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
+    private var bookResumeTask: Task<Void, Never>?
     private var generation = UUID()
     private var store: AppStore?
     private var lastSavedSecond = -1
@@ -74,7 +75,27 @@ final class Player: ObservableObject {
     }
     func attach(_ store: AppStore) { self.store = store }
     func play(_ items: [MediaItem], at index: Int = 0) {
-        guard items.indices.contains(index) else { return }; saveProgress(); queue = items; self.index = index; start()
+        guard items.indices.contains(index) else { return }; bookResumeTask?.cancel(); saveProgress(); queue = items; self.index = index; start()
+    }
+    func resumeBook(_ saved: MediaItem) {
+        guard let store else { return }
+        if current?.id == saved.id, queue.count > 1 { resume(); showPlayer = true; return }
+        bookResumeTask?.cancel()
+        let token = generation
+        bookResumeTask = Task {
+            do {
+                let book = try BookPlayback.book(for: saved, shelf: store.bookshelf)
+                let detail = try await store.bookCall(book.source, pluginID: book.raw.string("_plugin"), action: "bookDetail", args: [book.key, true, true]) as? JSONObject ?? [:]
+                try Task.checkCancellation(); guard generation == token else { return }
+                let episodes = BookPlayback.episodes(detail, book: book)
+                let position = try BookPlayback.resumeIndex(saved, episodes: episodes)
+                // Complete this task before play() cancels pending resume work.
+                bookResumeTask = nil
+                play(episodes, at: position); showPlayer = true
+            } catch {
+                if !Task.isCancelled && generation == token { store.message = error.localizedDescription }
+            }
+        }
     }
     private func start() {
         guard let current, let store else { return }

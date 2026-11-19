@@ -81,7 +81,7 @@ struct MusicView: View {
         }.background(Palette.paper).navigationTitle("发现音乐").task {
             if listsCover == nil, let rows = try? await store.catalog("lists", ["source": "wy", "sort": "@hot", "page": 1]).rows("list"), let first = rows.first { listsCover = store.artwork(MediaItem(first)) }
             if chartsCover == nil, let row = try? await store.catalog("charts", ["source": "wy"]).rows("list").first,
-               let cover = try? await store.catalog("chart-cover", ["source": "wy", "id": row.string("id", "bangid")]) { chartsCover = cover.rows("list").first.flatMap { URL(string: $0.string("img")) } }
+               let cover = try? await store.catalog("chart-cover", ["source": "wy", "id": MediaItem(row, kind: "chart").catalogID]) { chartsCover = cover.rows("list").first.flatMap { URL(string: $0.string("img")) } }
         }
     }
 }

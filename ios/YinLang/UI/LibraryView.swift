@@ -76,7 +76,7 @@ struct LibraryDiscoveryView: View {
                 ForEach(kinds, id: \.self) { key in
                     VStack(alignment: .leading, spacing: 12) {
                         HStack { Text(title(key)).font(.title3.bold()); Spacer(); Button { Task { await load(key) } } label: { Image(systemName: "arrow.clockwise") }.disabled(loading.contains(key)).accessibilityLabel("刷新" + title(key))
-                            NavigationLink("全部") { LibraryListView(kind: key == "songs" ? "songs" : "albums", identifier: key, title: title(key)) }.font(.caption)
+                            NavigationLink("全部") { LibraryListView(kind: key == "songs" ? "discoverySongs" : "albums", identifier: key, title: title(key), snapshot: sections[key]) }.font(.caption).disabled(sections[key]?.isEmpty != false)
                         }
                         if loading.contains(key) && sections[key] == nil { ProgressView() }
                         if let error = failures[key] { ErrorPanel(text: error) { Task { await load(key) } } }
@@ -113,6 +113,8 @@ struct LibraryListView: View {
     var kind: String
     var identifier: String = ""
     var title: String
+    var snapshot: [MediaItem]? = nil
+    @State private var snapshotConsumed = false
     @State private var rows: [MediaItem] = []
     @State private var original: [MediaItem] = []
     @State private var editable = false
@@ -123,7 +125,7 @@ struct LibraryListView: View {
     @State private var more = false
     @State private var sort = "original"
     @State private var removeIndex: Int?
-    var isSongs: Bool { ["songs", "favorites", "album", "playlist"].contains(kind) }
+    var isSongs: Bool { ["songs", "discoverySongs", "favorites", "album", "playlist"].contains(kind) }
     var displayed: [MediaItem] {
         let filtered = query.isEmpty ? rows : rows.filter { ($0.title + $0.subtitle).localizedCaseInsensitiveContains(query) }
         if sort == "name" { return filtered.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending } }
@@ -160,10 +162,18 @@ struct LibraryListView: View {
     }
     private func load(next: Bool = false) async {
         guard let nav = store.nav, !loading else { return }; loading = true; error = ""; defer { loading = false }
+        if !next, let snapshot, !snapshotConsumed {
+            guard snapshot.allSatisfy({ $0.raw.string("_account") == nav.identity }) else { rows = []; original = []; more = false; error = "音乐库账号已变更，请返回发现页刷新"; return }
+            rows = snapshot; original = snapshot; offset = snapshot.count
+            snapshotConsumed = true
+            more = kind == "albums" && identifier != "random" && snapshot.count == 12
+            return
+        }
         do {
-            let requested = next ? offset + 50 : 0
+            let requested = next ? offset : 0
             let result: [JSONObject]
             switch kind {
+            case "discoverySongs": result = try await nav.get("getRandomSongs", [.init(name: "size", value: "12")]).object("randomSongs").rows("song")
             case "songs": result = try await nav.search("", offset: requested)
             case "favorites": result = try await nav.get("getStarred2").object("starred2").rows("song")
             case "albums": result = try await nav.get("getAlbumList2", [.init(name: "type", value: ["frequent", "random", "newest"].contains(identifier) ? identifier : "newest"), .init(name: "size", value: "50"), .init(name: "offset", value: "\(requested)")]).object("albumList2").rows("album")
@@ -175,7 +185,7 @@ struct LibraryListView: View {
             default: result = []
             }
             let items = result.map { store.libraryItem($0, kind: isSongs ? "song" : "album") }
-            if next { rows += items } else { rows = items }; original = rows; offset = requested; more = ["songs", "albums"].contains(kind) && result.count == 50
+            if next { rows += items } else { rows = items }; original = rows; offset = requested + result.count; more = ["songs", "albums"].contains(kind) && result.count == 50
         } catch { self.error = error.localizedDescription }
     }
 }
