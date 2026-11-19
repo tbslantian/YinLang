@@ -59,25 +59,30 @@ struct LibraryDiscoveryView: View {
     @State private var failures: [String: String] = [:]
     @State private var loading: Set<String> = []
     @AppStorage("discover-kind") private var discover = "songs"
-    private let kinds = ["songs", "frequent", "random", "newest"]
+    private var kinds: [String] { discover == "albums" ? ["random", "frequent", "songs", "newest"] : ["songs", "frequent", "random", "newest"] }
     private func title(_ key: String) -> String { ["songs": "随心听", "frequent": "常听专辑", "random": "随机推荐", "newest": "最近添加"][key] ?? key }
+    private func subtitle(_ key: String) -> String { ["songs": "为你随机挑选的歌曲", "frequent": "那些值得反复聆听的声音", "random": "从音乐库里，发现新的心情", "newest": "刚刚加入音乐库的专辑"][key] ?? "" }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                Text((UserDefaults.standard.string(forKey: "nav-alias") ?? "Navidrome") + " · 你的私人音乐库").font(.system(size: 13)).foregroundStyle(Palette.muted)
+                NavigationLink { CatalogView(mode: "search", library: true) } label: { SearchEntry(title: "在音乐库中搜索") }.buttonStyle(.plain)
                 ForEach(kinds, id: \.self) { key in
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack { Text(title(key)).font(.title3.bold()); Spacer(); Button { Task { await load(key) } } label: { YLIcon(systemName: "arrow.clockwise") }.disabled(loading.contains(key)).accessibilityLabel("刷新" + title(key))
-                            NavigationLink("查看全部") { LibraryListView(kind: key == "songs" && discover == "songs" ? "discoverySongs" : "albums", identifier: key == "songs" ? "random" : key, title: title(key), snapshot: sections[key]) }.font(.caption).disabled(sections[key]?.isEmpty != false)
+                        HStack(spacing: 0) { Text(title(key)).font(.system(size: 20, weight: .bold)); Spacer();
+                            NavigationLink("查看全部") { LibraryListView(kind: key == "songs" ? "discoverySongs" : "albums", identifier: key, title: title(key), snapshot: sections[key]) }.font(.system(size: 12, weight: .bold)).padding(.horizontal, 9).frame(minHeight: 44).disabled(sections[key]?.isEmpty != false)
+                            if key == "songs" { Button { if let rows = sections[key] { player.play(rows) } } label: { YLIcon(systemName: "play.fill", size: 18).frame(width: 44, height: 44) }.disabled(sections[key]?.isEmpty != false).accessibilityLabel("播放随心听的全部歌曲") }
+                            Button { Task { await load(key) } } label: { YLIcon(systemName: "arrow.clockwise", size: 19).frame(width: 44, height: 44) }.disabled(loading.contains(key)).accessibilityLabel("刷新" + title(key))
                         }
+                        Text(subtitle(key)).font(.system(size: 12)).foregroundStyle(Palette.muted)
                         if loading.contains(key) && sections[key] == nil { ProgressView() }
                         if let error = failures[key] { ErrorPanel(text: error) { Task { await load(key) } } }
-                        if key == "songs" && discover == "songs" {
+                        if key == "songs" {
                             if let rows = sections[key], !rows.isEmpty {
-                                Button("播放全部", systemImage: "play.fill") { player.play(rows) }.font(.subheadline)
-                                ForEach(rows.prefix(4)) { item in SongRow(item: item) { player.play(rows, at: rows.firstIndex(of: item) ?? 0) } }
+                                VStack(spacing: 0) { ForEach(Array(rows.prefix(4).enumerated()), id: \.offset) { index, item in DiscoverySongRow(item: item) { player.play(rows, at: index) }; if index < min(4, rows.count) - 1 { Rectangle().fill(Palette.soft).frame(height: 0.5).padding(.leading, 54) } } }
                             }
                         } else if key == "frequent" {
-                            ForEach(Array((sections[key] ?? []).prefix(3).enumerated()), id: \.offset) { index, item in NavigationLink { LibraryListView(kind: "album", identifier: item.key, title: item.title) } label: { HStack { Text(String(index + 1)).font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.muted).frame(width: 24); MediaRow(item: item) } }.buttonStyle(.plain) }
+                            VStack(spacing: 0) { ForEach(Array((sections[key] ?? []).prefix(3).enumerated()), id: \.offset) { index, item in DiscoveryAlbumRow(item: item, rank: index + 1); if index < min(3, sections[key]?.count ?? 0) - 1 { Rectangle().fill(Palette.soft).frame(height: 0.5).padding(.leading, 54) } } }
                         } else {
                             ScrollView(.horizontal, showsIndicators: false) { LazyHStack(alignment: .top, spacing: 14) {
                                 ForEach(sections[key] ?? []) { item in NavigationLink { LibraryListView(kind: "album", identifier: item.key, title: item.title) } label: { VStack(alignment: .leading, spacing: 8) { Artwork(item: item, size: 145); Text(item.title).font(.subheadline).lineLimit(1).foregroundStyle(Palette.ink); Text(item.subtitle).font(.caption).lineLimit(1).foregroundStyle(Palette.muted) }.frame(width: 145) } }
@@ -86,17 +91,45 @@ struct LibraryDiscoveryView: View {
                         }
                     }
                 }
-            }.padding(16).frame(maxWidth: .infinity).frame(maxWidth: .infinity)
-        }.background { AndroidBackground() }.androidPage("发现").task { for key in kinds where sections[key] == nil { await load(key) } }.refreshable { for key in kinds { await load(key) } }
+            }.padding(16).frame(maxWidth: .infinity)
+        }.background { AndroidBackground() }.androidPage("发现", category: "音乐库").buttonStyle(.plain).task { for key in kinds where sections[key] == nil { await load(key) } }.refreshable { for key in kinds { await load(key) } }
     }
     private func load(_ key: String) async {
         guard let nav = store.nav, !loading.contains(key) else { return }; loading.insert(key); failures[key] = nil; defer { loading.remove(key) }
         do {
             let rows: [JSONObject]
-            if key == "songs" && discover == "songs" { rows = try await nav.get("getRandomSongs", [.init(name: "size", value: "12")]).object("randomSongs").rows("song") }
+            if key == "songs" { rows = try await nav.get("getRandomSongs", [.init(name: "size", value: "12")]).object("randomSongs").rows("song") }
             else { rows = try await nav.get("getAlbumList2", [.init(name: "type", value: key == "songs" ? "random" : key), .init(name: "size", value: "12")]).object("albumList2").rows("album") }
-            sections[key] = rows.map { store.libraryItem($0, kind: key == "songs" && discover == "songs" ? "song" : "album") }
+            sections[key] = rows.map { store.libraryItem($0, kind: key == "songs" ? "song" : "album") }
         } catch { failures[key] = error.localizedDescription }
+    }
+}
+
+private struct DiscoverySongRow: View {
+    @EnvironmentObject var store: AppStore
+    var item: MediaItem
+    var play: () -> Void
+    @State private var actions = false
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: play) { HStack(spacing: 10) { Artwork(item: item); VStack(alignment: .leading, spacing: 5) { Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1); HStack(spacing: 5) { let format = item.raw.string("suffix").uppercased(); if !format.isEmpty { Text(format + (item.raw.string("bitRate").isEmpty ? "" : " " + item.raw.string("bitRate") + "K")).font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.accent).padding(.horizontal, 6).padding(.vertical, 3).background(Palette.tint, in: RoundedRectangle(cornerRadius: 7)) }; Text(item.subtitle).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(1) } }.frame(maxWidth: .infinity, alignment: .leading) } }.buttonStyle(.plain)
+            Text(clockText(item.duration)).font(.system(size: 11)).foregroundStyle(Palette.muted).frame(width: 34, alignment: .trailing)
+            Button { store.toggleLike(item) } label: { YLIcon(systemName: store.isLiked(item) ? "heart.fill" : "heart", size: 19).foregroundStyle(Palette.accent).frame(width: 44, height: 44) }.accessibilityLabel("服务器收藏")
+            Button { actions = true } label: { YLIcon(systemName: "ellipsis", size: 19).foregroundStyle(Palette.accent).frame(width: 44, height: 44) }.accessibilityLabel("歌曲操作")
+        }.padding(.vertical, 8).frame(minHeight: 68).buttonStyle(.plain).sheet(isPresented: $actions) { SongActionsView(item: item) }
+    }
+}
+private struct DiscoveryAlbumRow: View {
+    @EnvironmentObject var store: AppStore
+    @EnvironmentObject var player: Player
+    var item: MediaItem
+    var rank: Int
+    @State private var loading = false
+    var body: some View {
+        HStack(spacing: 0) {
+            NavigationLink { LibraryListView(kind: "album", identifier: item.key, title: item.title) } label: { HStack(spacing: 11) { Artwork(item: item, size: 50); VStack(alignment: .leading, spacing: 4) { Text("\(rank)  " + item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1); Text(item.subtitle + (item.raw.string("songCount").isEmpty ? "" : " · " + item.raw.string("songCount") + " 首") + (item.raw.string("playCount").isEmpty ? "" : " · 播放 " + item.raw.string("playCount") + " 次")).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(2) }.frame(maxWidth: .infinity, alignment: .leading) } }
+            Button { Task { guard let nav = store.nav else { return }; loading = true; defer { loading = false }; do { let songs = try await nav.get("getAlbum", [.init(name: "id", value: item.key)]).object("album").rows("song"); player.play(songs.map { store.libraryItem($0) }) } catch { store.message = error.localizedDescription } } } label: { YLIcon(systemName: "play.fill", size: 18).foregroundStyle(Palette.accent).frame(width: 44, height: 44) }.disabled(loading).accessibilityLabel("播放专辑 " + item.title)
+        }.padding(.vertical, 9).buttonStyle(.plain)
     }
 }
 

@@ -106,14 +106,14 @@ struct CatalogDetailView: View {
     var filtered: [MediaItem] { query.isEmpty ? rows : rows.filter { ($0.title + $0.subtitle).localizedCaseInsensitiveContains(query) } }
     var body: some View {
         AndroidList {
-            HStack(spacing: 16) { Artwork(item: item, size: 100); VStack(alignment: .leading, spacing: 10) { Text(item.title).font(.system(size: 20, weight: .bold)); Text(Platform(rawValue: item.source)?.title ?? "").font(.system(size: 13)).foregroundStyle(Palette.muted); Button { store.toggleFollow(item) } label: { HStack { YLIcon(systemName: "bookmark", size: 18); Text(store.followed.contains(where: { $0.id == item.id }) ? "取消关注" : "关注歌单") } }.foregroundStyle(Palette.accent) } }.padding(.vertical, 10)
-            AndroidSearch(text: $query, hint: "在歌单中找歌")
-            if !rows.isEmpty { Button { player.play(filtered) } label: { HStack { YLIcon(systemName: "play.fill", size: 19); Text("播放全部（\(filtered.count)）").font(.system(size: 15, weight: .bold)); Spacer() }.foregroundStyle(Palette.accent).padding(.vertical, 14) } }
+            if !chart { Button(store.followed.contains(where: { $0.id == item.id }) ? "取消关注" : "关注歌单") { store.toggleFollow(item) }.buttonStyle(AndroidButtonStyle()) }
+            AndroidSearch(text: $query, hint: "在当前列表中查找歌曲")
+            HStack(spacing: 9) { Button { player.play(filtered) } label: { Text("播放全部").frame(maxWidth: .infinity) }.buttonStyle(AndroidButtonStyle(primary: true)).disabled(rows.isEmpty); Button { Task { await load(refresh: true) } } label: { YLIcon(systemName: "arrow.clockwise").frame(width: 44, height: 44).foregroundStyle(Palette.accent) }.accessibilityLabel("刷新列表") }
             ForEach(Array(filtered.enumerated()), id: \.offset) { position, song in SongRow(item: song, rank: chart ? position + 1 : nil) { player.play(filtered, at: position) } }
             if loading { ProgressView().frame(maxWidth: .infinity) }
             if !error.isEmpty { ErrorPanel(text: error) { Task { await load(refresh: true) } } }
             if more && !loading { Button("加载更多") { Task { await load(next: true) } }.buttonStyle(AndroidButtonStyle()) }
-        }.androidPage(item.title, category: chart ? "在线排行榜" : "在线歌单") { Button { Task { await load(refresh: true) } } label: { YLIcon(systemName: "arrow.clockwise").frame(width: 44, height: 44) }.accessibilityLabel("刷新列表") }.task { if rows.isEmpty { await load() } }.refreshable { await load(refresh: true) }
+        }.androidPage(item.title, category: Platform(rawValue: item.source)?.title ?? "在线音乐").task { if rows.isEmpty { await load() } }.refreshable { await load(refresh: true) }
     }
     private func load(next: Bool = false, refresh: Bool = false) async {
         guard !loading else { return }; loading = true; error = ""; defer { loading = false }

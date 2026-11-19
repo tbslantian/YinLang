@@ -21,7 +21,7 @@ struct BooksView: View {
             SectionTitle(title: "我的收藏")
             BookGrid(rows: Array(store.bookshelf.prefix(6)))
             if store.bookshelf.isEmpty { Text("在书籍详情里加入书架，喜欢的故事会出现在这里。").font(.system(size: 14)).foregroundStyle(Palette.muted) }
-        }.androidPage("有声书").task { await store.installBundledBooks() }
+        }.androidPage("听书", category: "有声书").task { await store.installBundledBooks() }
     }
 }
 
@@ -121,13 +121,14 @@ struct BookDetailView: View {
     var displayed: [MediaItem] { let list = query.isEmpty ? episodes : episodes.filter { $0.title.localizedCaseInsensitiveContains(query) }; return reverse ? Array(list.reversed()) : list }
     var body: some View {
         AndroidList {
-            HStack(alignment: .top, spacing: 16) { Artwork(item: book, size: 100); VStack(alignment: .leading, spacing: 10) { Text(book.title).font(.system(size: 22, weight: .bold)); Text(book.subtitle).font(.system(size: 13)).foregroundStyle(Palette.muted); Button(store.bookshelf.contains(where: { $0.id == book.id }) ? "移出书架" : "加入书架", systemImage: "bookmark") { store.toggleShelf(book) }.foregroundStyle(Palette.accent) } }.padding(.vertical, 10)
+            RemoteImage(url: store.artwork(book)) { $0.resizable().scaledToFill() } placeholder: { Palette.soft.overlay { Text(book.title).font(.system(size: 18, weight: .bold)).padding(12) } }.frame(width: 110, height: 144).clipped().clipShape(RoundedRectangle(cornerRadius: 10)).padding(.vertical, 6)
+            Button("收藏 / 取消收藏") { store.toggleShelf(book) }.buttonStyle(AndroidButtonStyle())
             if !description.isEmpty { Text(description).font(.system(size: 14)).foregroundStyle(Palette.muted).padding(.vertical, 8) }
             HStack(spacing: 12) { if !episodes.isEmpty { Button("从第一章播放") { player.play(displayed) }.buttonStyle(AndroidButtonStyle(primary: true)); Button("继续收听") { let saved = store.nowBook; if let saved, saved.raw.string("_book") == book.id { player.resumeBook(saved) } else { player.play(episodes) } }.buttonStyle(AndroidButtonStyle()) }; Spacer(); Button { reverse.toggle() } label: { YLIcon(systemName: "arrow.up.arrow.down").frame(width: 44, height: 44) }.accessibilityLabel("章节排序") }
             AndroidSearch(text: $query, hint: "搜索章节")
-            ForEach(displayed) { item in SongRow(item: item) { player.play(displayed, at: displayed.firstIndex(of: item) ?? 0) } }
+            ForEach(Array(displayed.enumerated()), id: \.offset) { index, item in Button { player.play(displayed, at: index) } label: { HStack { Text("\(index + 1)  " + item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).padding(.vertical, 10); Spacer(); YLIcon(systemName: "play.fill", size: 17).foregroundStyle(Palette.accent).frame(width: 28, height: 36) }.padding(.leading, 12).padding(.trailing, 10).padding(.vertical, 8).androidSurface() }.buttonStyle(.plain) }
             if loading { ProgressView().frame(maxWidth: .infinity) }; if !error.isEmpty { ErrorPanel(text: error) { Task { await load() } } }
-        }.androidPage(book.title, category: "有声书").task { if episodes.isEmpty { await load() } }.refreshable { await load() }
+        }.androidPage(book.title, category: "有声书 / 章节").task { if episodes.isEmpty { await load() } }.refreshable { await load() }
     }
     private func load() async {
         guard !loading else { return }; loading = true; error = ""; defer { loading = false }
