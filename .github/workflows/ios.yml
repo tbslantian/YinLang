@@ -41,15 +41,18 @@ jobs:
           mkdir -p ios/build/package/Payload
           cp -R ios/build/YinLang.xcarchive/Products/Applications/YinLang.app ios/build/package/Payload/
           cd ios/build/package
-          /usr/bin/zip -qry ../YinLang-0.8.1-unsigned.ipa Payload
+          /usr/bin/zip -qry ../YinLang-0.8.2-unsigned.ipa Payload
           cd ..
-          shasum -a 256 YinLang-0.8.1-unsigned.ipa > SHA256SUMS.txt
+          shasum -a 256 YinLang-0.8.2-unsigned.ipa > SHA256SUMS.txt
           python3 - <<'PY'
           import hashlib, json, os, plistlib
           from pathlib import Path
-          ipa = Path('YinLang-0.8.1-unsigned.ipa')
+          ipa = Path('YinLang-0.8.2-unsigned.ipa')
           info = plistlib.loads(Path('YinLang.xcarchive/Products/Applications/YinLang.app/Info.plist').read_bytes())
-          result = dict(commit=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'], version=info['CFBundleShortVersionString'], build=info['CFBundleVersion'], devices=info['UIDeviceFamily'], minimumOS=info['MinimumOSVersion'], unsigned=True, sha256=hashlib.sha256(ipa.read_bytes()).hexdigest(), bytes=ipa.stat().st_size)
+          # SideStore versions affected by non-ASCII appIdName must see an ASCII name.
+          for key in ['CFBundleDisplayName', 'CFBundleName']:
+              assert info[key].isascii() and info[key].strip(), f'{key} must be ASCII for SideStore'
+          result = dict(commit=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'], version=info['CFBundleShortVersionString'], build=info['CFBundleVersion'], name=info['CFBundleDisplayName'], devices=info['UIDeviceFamily'], minimumOS=info['MinimumOSVersion'], unsigned=True, sha256=hashlib.sha256(ipa.read_bytes()).hexdigest(), bytes=ipa.stat().st_size)
           Path('build-verification.json').write_text(json.dumps(result, indent=2) + '\n')
           PY
       - name: Select available phone and tablet simulators

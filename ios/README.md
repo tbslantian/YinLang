@@ -2,6 +2,10 @@
 
 原生 SwiftUI 通用应用，最低 iOS / iPadOS 17。iPhone 使用导航页面，iPad 使用可折叠侧栏，支持横竖屏和可调整窗口。首页默认经典影像，直接复用安卓版 `home_music_light/dark`、`home_books_light/dark` 原图。
 
+## 0.8.2 安装兼容修复
+
+IPA 的 `CFBundleDisplayName` 改为 `YinLang`，与 `CFBundleName` 一起使用 ASCII 名称，避免部分 SideStore 版本注册 App ID 时把中文名称作为 `appIdName` 提交而遭拒。设备桌面名称显示为 YinLang，应用内部继续使用中文“音浪”。构建打包时检查两个名称字段，防止回归。仍需在实际 SideStore / Apple 账号上确认安装结果。
+
 ## 0.8.1 修复
 
 - 五平台排行榜详情、首页榜首封面和已关注榜单更新改用 `bangid`，兼容旧收藏身份。
