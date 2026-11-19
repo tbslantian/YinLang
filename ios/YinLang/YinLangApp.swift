@@ -50,6 +50,7 @@ struct RootView: View {
             HomeView()
 #endif
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .bottom) { ResolutionNoticeView() }
             // Reserve real layout space outside the navigation stack, including
             // pushed pages and changes to loading / one- or two-line lyrics.
             if player.current != nil { MiniPlayer().fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("mini-player") }

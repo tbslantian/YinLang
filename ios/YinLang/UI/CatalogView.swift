@@ -94,7 +94,7 @@ struct CatalogView: View {
             if mode == "lists" {
                 Button { showLink = true } label: { YLIcon(systemName: "link", size: 20).frame(width: 44, height: 44).contentShape(Rectangle()) }.accessibilityLabel("按链接打开")
             }
-        }.foregroundStyle(Palette.accent).buttonStyle(.plain).frame(minHeight: 44).zIndex(1).accessibilityIdentifier("catalog-layout-controls")
+        }.foregroundStyle(Palette.accent).buttonStyle(.plain).frame(minHeight: 44).zIndex(1)
     }
     var filtered: [MediaItem] { mode == "charts" && !query.isEmpty ? rows.filter { $0.title.localizedCaseInsensitiveContains(query) } : rows }
     private func reload(refresh: Bool = false) async { generation = UUID(); loading = false; rows = []; more = false; page = 1; await load(page: 1, refresh: refresh) }

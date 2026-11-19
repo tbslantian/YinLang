@@ -5,24 +5,35 @@ final class AudioProbe: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private var session: URLSession?
     private var prefix = Data()
     private var response: HTTPURLResponse?
+    private let stateLock = NSLock()
+    private var finished = false
     private let quality: String
     init(quality: String) { self.quality = quality }
     func verify(_ url: URL, headers: [String: String]) async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
+        try await withTaskCancellationHandler(operation: {
+          try Task.checkCancellation()
+          try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 20; config.timeoutIntervalForResource = 25
             let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
-            session = URLSession(configuration: config, delegate: self, delegateQueue: queue)
+            let session = URLSession(configuration: config, delegate: self, delegateQueue: queue)
             var request = URLRequest(url: url); request.allHTTPHeaderFields = headers; request.setValue("bytes=0-16383", forHTTPHeaderField: "Range")
-            session?.dataTask(with: request).resume()
-        }
+            let started = stateLock.withLock {
+                guard !finished else { return false }
+                self.continuation = continuation; self.session = session
+                return true
+            }
+            if started { session.dataTask(with: request).resume() }
+            else { session.invalidateAndCancel(); continuation.resume(throwing: CancellationError()) }
+          }
+          try Task.checkCancellation()
+        }, onCancel: { self.finish(.failure(CancellationError())) })
     }
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
         guard let http = response as? HTTPURLResponse, [200,206].contains(http.statusCode) else { completionHandler(.cancel); finish(.failure(AppFailure.message("音频地址 HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)"))); return }
         self.response = http; completionHandler(.allow)
     }
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) { prefix.append(data.prefix(max(0, 16384 - prefix.count))); if prefix.count >= 16384 { inspect() } }
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) { if continuation == nil { return }; if let error { finish(.failure(error)) } else { inspect() } }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) { if stateLock.withLock({ finished }) { return }; if let error { finish(.failure(error)) } else { inspect() } }
     private func inspect() {
         guard !prefix.isEmpty else { finish(.failure(AppFailure.message("音源返回空文件"))); return }
         let text = String(decoding: prefix.prefix(256), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -36,5 +47,13 @@ final class AudioProbe: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         if ["128k", "192k", "320k"].contains(quality) && lossless { finish(.failure(AppFailure.message("音源返回档位与请求不符"))); return }
         finish(.success(()))
     }
-    private func finish(_ result: Result<Void, Error>) { guard let continuation else { return }; self.continuation = nil; session?.invalidateAndCancel(); session = nil; continuation.resume(with: result) }
+    private func finish(_ result: Result<Void, Error>) {
+        let pending = stateLock.withLock { () -> (CheckedContinuation<Void, Error>?, URLSession?) in
+            guard !finished else { return (nil, nil) }
+            finished = true
+            let pending = (continuation, session); continuation = nil; session = nil
+            return pending
+        }
+        pending.1?.invalidateAndCancel(); pending.0?.resume(with: result)
+    }
 }

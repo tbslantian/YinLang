@@ -31,6 +31,7 @@ jobs:
           node ios/scripts/prepare-resources.mjs
           python3 ios/scripts/generate-project.py
       - name: Compile universal iPhone and iPad device archive
+        id: archive
         run: |
           set -o pipefail
           cc -std=c11 -D_DARWIN_C_SOURCE ios/YinLang/Playback/AudioDSP.c ios/tests/audio-dsp-test.c -o /tmp/yinlang-dsp-test -lm
@@ -74,6 +75,7 @@ jobs:
           xcrun simctl bootstatus "$PHONE_ID" -b
           xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$PHONE_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPhone.xcresult CODE_SIGNING_ALLOWED=NO test | tee ios-iphone-test.log
       - name: Test on iPad
+        if: ${{ !cancelled() && steps.archive.outcome == 'success' }}
         run: |
           set -o pipefail
           xcrun simctl shutdown "$PHONE_ID" || true

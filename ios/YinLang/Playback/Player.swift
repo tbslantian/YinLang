@@ -15,6 +15,8 @@ final class Player: ObservableObject {
     @Published var lyrics: [LyricLine] = []
     @Published var lyricText = ""
     @Published var status = "选择一首喜欢的音乐"
+    @Published var audioInfo = AudioStreamInfo()
+    @Published private(set) var resolutionNotice: ResolutionNotice?
     @Published var mode: PlayMode = .sequence
     @Published var speed: Float = 1 { didSet { if playing && !casting { audio.rate = speed }; saveBookRate() } }
     @Published var sleepUntil: Date?
@@ -32,6 +34,9 @@ final class Player: ObservableObject {
     private var itemObservation: NSKeyValueObservation?
     private var load: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
+    private var audioInfoTask: Task<Void, Never>?
+    private var noticeTask: Task<Void, Never>?
+    private var resolutionSucceeded = false
     private var bookResumeTask: Task<Void, Never>?
     private var generation = UUID()
     private var store: AppStore?
@@ -99,11 +104,13 @@ final class Player: ObservableObject {
     }
     private func start(useLocal: Bool = true, resumeAt: Double? = nil) {
         guard let current, let store else { return }
-        load?.cancel(); artworkTask?.cancel(); itemObservation = nil
+        load?.cancel(); artworkTask?.cancel(); audioInfoTask?.cancel(); itemObservation = nil
+        noticeTask?.cancel(); resolutionNotice = nil; resolutionSucceeded = false; audioInfo = AudioStreamInfo()
         if let failureObserver { NotificationCenter.default.removeObserver(failureObserver); self.failureObserver = nil }
         audio.pause(); audio.replaceCurrentItem(with: nil)
         generation = UUID(); let token = generation
         loading = true; playing = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = "正在解析音频…"
+        publishResolution(ResolutionNotice(phase: .resolving, detail: current.title))
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         if useLocal {
             if current.kind == "episode" { speed = UserDefaults.standard.float(forKey: "speed:" + current.raw.string("_book")); if speed < 0.25 { speed = 1 } }
@@ -111,24 +118,39 @@ final class Player: ObservableObject {
         }
         load = Task {
             do {
-                let (url, headers, source) = try await store.resolve(current, useLocal: useLocal)
+                let (url, headers, source) = try await store.resolve(current, useLocal: useLocal) { [weak self] notice in
+                    guard let self, self.generation == token, !Task.isCancelled else { return }
+                    self.publishResolution(notice)
+                }
                 try Task.checkCancellation(); guard generation == token else { return }
                 if let receiver = dlna.current {
                     try await dlna.cast(current, resolved: url, headers: headers, to: receiver)
-                    status = "DLNA · " + receiver.name; loading = false; playing = true; duration = current.duration; return
+                    status = "DLNA · " + receiver.name; loading = false; playing = true; duration = current.duration
+                    if !resolutionSucceeded { publishResolution(ResolutionNotice(phase: .success, detail: status)) }
+                    return
                 }
                 try activateAudioSession()
                 let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
                 let item = AVPlayerItem(asset: asset)
                 item.audioTimePitchAlgorithm = .spectral
                 AudioEffects.shared.apply()
-                if let track = try? await asset.loadTracks(withMediaType: .audio).first { _ = YLAttachAudioEffects(item, track) }
+                if let track = try? await asset.loadTracks(withMediaType: .audio).first {
+                    _ = YLAttachAudioEffects(item, track)
+                    audioInfoTask = Task { [weak self] in
+                        let info = await AudioStreamInfo.read(track)
+                        guard let self, self.generation == token, !Task.isCancelled else { return }
+                        self.audioInfo = info
+                    }
+                }
                 try Task.checkCancellation(); guard generation == token else { return }
                 itemObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
                     Task { @MainActor in
                         guard let self, self.generation == token, self.audio.currentItem === item else { return }
                         if item.status == .failed { self.handleFailure(item, url: url, token: token, retryLocal: useLocal) }
-                        else if item.status == .readyToPlay { self.loading = false }
+                        else if item.status == .readyToPlay {
+                            self.loading = false
+                            if !self.resolutionSucceeded { self.publishResolution(ResolutionNotice(phase: .success, detail: source)) }
+                        }
                     }
                 }
                 failureObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self] _ in
@@ -158,7 +180,19 @@ final class Player: ObservableObject {
                 }
             } catch {
                 guard generation == token, !Task.isCancelled else { return }; loading = false; status = error.localizedDescription; store.message = status
+                publishResolution(ResolutionNotice(phase: .failure, detail: status))
             }
+        }
+    }
+    func publishResolution(_ notice: ResolutionNotice) {
+        noticeTask?.cancel()
+        if notice.phase == .success { resolutionSucceeded = true }
+        withAnimation(.easeOut(duration: 0.18)) { resolutionNotice = notice }
+        guard notice.phase == .success || notice.phase == .failure else { return }
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: notice.phase == .success ? 2_000_000_000 : 8_500_000_000)
+            guard let self, !Task.isCancelled, self.resolutionNotice?.id == notice.id else { return }
+            withAnimation(.easeOut(duration: 0.18)) { self.resolutionNotice = nil }
         }
     }
     private func handleFailure(_ item: AVPlayerItem, url: URL, token: UUID, retryLocal: Bool) {
@@ -174,6 +208,7 @@ final class Player: ObservableObject {
             start(useLocal: false, resumeAt: position)
         } else {
             loading = false; playing = false; status = item.error?.localizedDescription ?? "音频格式无法播放"; store?.message = status
+            publishResolution(ResolutionNotice(phase: .failure, detail: status))
         }
     }
     func toggle() { playing ? pause() : resume() }
@@ -216,7 +251,8 @@ final class Player: ObservableObject {
         if position != index { queue.remove(at: position); if position < index { index -= 1 }; return }
         pause(); queue.remove(at: position)
         if !queue.isEmpty { index = min(index, queue.count - 1); start(); return }
-        load?.cancel(); artworkTask?.cancel(); bookResumeTask?.cancel(); generation = UUID(); itemObservation = nil
+        load?.cancel(); artworkTask?.cancel(); audioInfoTask?.cancel(); noticeTask?.cancel(); bookResumeTask?.cancel(); generation = UUID(); itemObservation = nil
+        audioInfo = AudioStreamInfo(); resolutionNotice = nil; resolutionSucceeded = false
         if let failureObserver { NotificationCenter.default.removeObserver(failureObserver); self.failureObserver = nil }
         audio.replaceCurrentItem(with: nil); index = 0; loading = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = "选择一首喜欢的音乐"
         updateNowPlaying()

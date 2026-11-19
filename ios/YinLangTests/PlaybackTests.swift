@@ -53,6 +53,7 @@ private final class PlaybackServer: @unchecked Sendable {
     private func respond(_ connection: NWConnection, request: String) {
         let lines = request.components(separatedBy: "\r\n")
         let target = lines.first?.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+        if target == "/stall" { return }
         let audio = target.hasPrefix("/audio.wav") || target.hasPrefix("/rest/stream.view")
         var body = audio ? wave : Data("{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\"}}".utf8)
         var code = "200 OK", extra = ""
@@ -72,6 +73,59 @@ private final class PlaybackServer: @unchecked Sendable {
 }
 
 final class PlaybackTests: XCTestCase {
+    @MainActor func testAudioVerificationCancellationStopsWaitingForNetworkTimeout() async throws {
+        let server = try PlaybackServer(); try await server.start(); defer { server.stop() }
+        let task = Task { try await AudioProbe(quality: "flac").verify(URL(string: server.base + "/stall")!, headers: [:]) }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let cancelledAt = Date(); task.cancel()
+        do { try await task.value; XCTFail("Cancelled probe must not succeed") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertLessThan(Date().timeIntervalSince(cancelledAt), 2)
+    }
+    @MainActor func testVerifiedSourceStopsBeforeLaterSourceIsInitialized() async throws { try await exerciseSourceOrder(failFirst: false) }
+    @MainActor func testFailedSourceFallsThroughAndStopsAtFirstVerifiedSource() async throws { try await exerciseSourceOrder(failFirst: true) }
+    @MainActor private func exerciseSourceOrder(failFirst: Bool) async throws {
+        let server = try PlaybackServer(); try await server.start(); defer { server.stop() }
+        let store = AppStore(), old = store.plugins
+        let prefix = UUID().uuidString
+        let firstID = prefix + "-first", winnerID = prefix + "-winner", laterID = prefix + "-later"
+        let ids = [firstID, winnerID, laterID]
+        func script(_ url: String) -> String {
+            "Native.put('started','yes'); lx.on('request', () => { Native.put('called','yes'); return '\(url)'; }); lx.send('inited',{sources:{wy:{qualitys:['flac']}}});"
+        }
+        store.plugins = [
+            Plugin(id: firstID, name: "First", version: "1", script: script(server.base + (failFirst ? "/invalid" : "/audio.wav")), address: "", books: false),
+            Plugin(id: winnerID, name: "Winner", version: "1", script: script(server.base + "/audio.wav"), address: "", books: false),
+            Plugin(id: laterID, name: "Later", version: "1", script: script(server.base + "/audio.wav"), address: "", books: false)
+        ]
+        defer {
+            for id in ids { store.invalidate(id); for key in ["started", "called"] { UserDefaults.standard.removeObject(forKey: id + ":" + key) } }
+            store.plugins = old
+        }
+        var updates: [ResolutionNotice] = []
+        let item = MediaItem(["id": prefix, "name": "Source order"], source: "wy")
+        let result = try await store.resolve(item, fallback: false, useLocal: false, quality: "flac") { updates.append($0) }
+        XCTAssertEqual(result.0.absoluteString, server.base + "/audio.wav")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: firstID + ":called"), "yes")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: winnerID + ":called"), failFirst ? "yes" : nil)
+        XCTAssertNil(UserDefaults.standard.string(forKey: laterID + ":started"))
+        if !failFirst { XCTAssertNil(UserDefaults.standard.string(forKey: winnerID + ":started")) }
+        XCTAssertEqual(updates.filter { $0.phase == .success }.count, 1)
+        XCTAssertEqual(updates.filter { $0.phase == .failure }.count, failFirst ? 1 : 0)
+        XCTAssertEqual(updates.last?.phase, .success)
+    }
+    @MainActor func testResolutionSuccessNoticeExpiresAndCannotHideNewerAttempt() async throws {
+        let player = Player()
+        player.publishResolution(ResolutionNotice(phase: .success, detail: "First"))
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        XCTAssertEqual(player.resolutionNotice?.phase, .success)
+        player.publishResolution(ResolutionNotice(phase: .resolving, detail: "Next"))
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        XCTAssertEqual(player.resolutionNotice?.detail, "Next")
+        player.publishResolution(ResolutionNotice(phase: .success, detail: "Next"))
+        try await Task.sleep(nanoseconds: 2_300_000_000)
+        XCTAssertNil(player.resolutionNotice)
+    }
     @MainActor func testRemovingQueueEntryBeforeCurrentKeepsCurrentSongAndProgress() {
         let player = Player()
         let songs = (1...4).map { MediaItem(["id": "queue-test-\($0)", "name": "Song \($0)"], source: "wy") }
@@ -205,6 +259,10 @@ final class PlaybackTests: XCTestCase {
         XCTAssertNil(store.message, store.message ?? "")
         XCTAssertFalse(player.loading, player.status)
         XCTAssertGreaterThan(player.elapsed, 0.5, "AVPlayer clock did not advance: " + player.status)
+        for _ in 0..<30 where player.audioInfo.sampleRate == 0 { try await Task.sleep(nanoseconds: 100_000_000) }
+        XCTAssertEqual(player.audioInfo.format, "PCM")
+        XCTAssertEqual(player.audioInfo.sampleRate, 44100, accuracy: 1)
+        XCTAssertGreaterThan(player.audioInfo.bitsPerSecond, 0)
         XCTAssertGreaterThan(player.duration, 1)
         if switchFromBook { XCTAssertEqual(player.current?.id, item.id); XCTAssertEqual(player.speed, 1) }
         if let seededCache, let cachedFile { XCTAssertEqual(try Data(contentsOf: seededCache), cachedFile, "Playback recovery must preserve the existing cache") }

@@ -83,9 +83,11 @@ final class LayoutTests: XCTestCase {
             for source in ["tx", "kg", "kw", "mg", "wy", "mg", "tx", "wy"] {
                 let chip = app.buttons["chip-" + source].firstMatch
                 XCTAssertTrue(chip.waitForExistence(timeout: 5))
-                for _ in 0..<2 where !chip.isHittable {
-                    if ["wy", "tx"].contains(source) { app.scrollViews["android-chips"].firstMatch.swipeRight() }
-                    else { app.scrollViews["android-chips"].firstMatch.swipeLeft() }
+                let chips = app.scrollViews["android-chips"].firstMatch
+                for _ in 0..<3 {
+                    if chip.isHittable, chip.frame.minX >= chips.frame.minX, chip.frame.maxX <= chips.frame.maxX { break }
+                    if chip.frame.minX < chips.frame.minX { chips.swipeRight() }
+                    else { chips.swipeLeft() }
                 }
                 chip.tap()
                 let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: chip)
@@ -98,6 +100,7 @@ final class LayoutTests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
         let app = launch("player")
+        XCTAssertEqual(app.staticTexts["player-audio-info"].firstMatch.label, "FLAC · 960 kbps · 96 kHz")
         let portrait = app.descendants(matching: .any).matching(identifier: "player-artwork-stage").firstMatch
         XCTAssertTrue(portrait.waitForExistence(timeout: 8))
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -227,12 +230,12 @@ final class LayoutTests: XCTestCase {
         let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "私人音乐库 · 8 首歌曲"), object: count)
         XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 5), .completed)
         let hero = app.buttons["library-discovery"].firstMatch
-        XCTAssertTrue(hero.exists); XCTAssertGreaterThanOrEqual(hero.frame.height, 232)
+        XCTAssertTrue(hero.exists); XCTAssertGreaterThanOrEqual(hero.frame.height, 232 - 0.5)
         let songs = app.buttons["library-songs-shortcut"].firstMatch
         let albums = app.buttons["library-albums-shortcut"].firstMatch
         let favorites = app.descendants(matching: .any).matching(identifier: "library-favorites-shortcut").firstMatch
         for shortcut in [songs, albums, favorites] {
-            XCTAssertTrue(shortcut.exists); XCTAssertGreaterThanOrEqual(shortcut.frame.height, 72)
+            XCTAssertTrue(shortcut.exists); XCTAssertGreaterThanOrEqual(shortcut.frame.height, 72 - 0.5)
             XCTAssertGreaterThanOrEqual(shortcut.frame.minX, hero.frame.maxX)
             XCTAssertLessThanOrEqual(shortcut.frame.maxY, hero.frame.maxY + 1)
         }

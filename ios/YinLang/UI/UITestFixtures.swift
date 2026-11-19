@@ -23,7 +23,8 @@ enum UITestFixtures {
         store.plugins = [Plugin(id:"fixture-lx",name:"测试音源",version:"1.2.3",script:"/**\n * @name 测试音源\n */",address:"",books:false),Plugin(id:"fixture-book",name:"随身听书公开源合集",version:"5.7",script:"",address:"",books:true)]
         store.liked = songs.prefix(4).map { MediaItem($0, source:"wy") }; store.followed = playlists.map { MediaItem($0, kind:"playlist") }; store.bookshelf = books.prefix(4).map { MediaItem($0, source:"fixture-source", kind:"book") }; store.message = nil
         if ["player","lyrics","queue","song-menu"].contains(screen) || ProcessInfo.processInfo.arguments.contains("-ui-mini-player") { player.queue = store.liked; player.duration = 245; player.elapsed = 62; player.buffered = 160; player.status = "FLAC · 24 bit · 96 kHz"; player.lyricText = songs[0].string("lrc"); player.lyrics = LyricLine.parse(player.lyricText) }
-        if ProcessInfo.processInfo.arguments.contains("-ui-mini-loading") { player.loading = true }
+        if player.current != nil { player.audioInfo = AudioStreamInfo(format: "FLAC", bitsPerSecond: 960000, sampleRate: 96000) }
+        if ProcessInfo.processInfo.arguments.contains("-ui-mini-loading") { player.loading = true; player.publishResolution(ResolutionNotice(phase: .resolving, detail: "测试音源 · 网易云 · 320k")) }
     }
     static func catalog(_ operation: String, args: JSONObject = [:]) -> JSONObject {
         if operation == "list", ProcessInfo.processInfo.arguments.contains("-ui-bottom-audit") {

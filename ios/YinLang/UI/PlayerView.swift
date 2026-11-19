@@ -11,7 +11,6 @@ struct MiniPlayer: View {
     var body: some View {
         if let item = player.current {
             VStack(spacing: 5) {
-                if player.loading { Text(player.status).font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.accent).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 15).padding(.vertical, 9).background(Palette.tint, in: RoundedRectangle(cornerRadius: 16)) }
                 HStack(spacing: 11) {
                     Button { player.toggle(); reveal() } label: { Artwork(item: item, size: 48).overlay { if showToggle { Color.black.opacity(0.4); YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: 24).foregroundStyle(.white) } }.clipShape(RoundedRectangle(cornerRadius: 11)) }.buttonStyle(.plain).accessibilityLabel(player.playing ? "暂停" : "播放").onLongPressGesture { player.showPlayer = true }
                     Button { player.showPlayer = true } label: {
@@ -69,16 +68,18 @@ struct PlayerView: View {
                         HStack(spacing: compact ? 16 : 28) {
                             artworkStage(maximumEdge: 520)
                                 .frame(width: max(0, (proxy.size.width - (compact ? 48 : 80)) * 0.43))
+                                .accessibilityElement(children: .ignore).accessibilityLabel("播放器封面")
                                 .accessibilityIdentifier("player-landscape-artwork")
                             VStack(spacing: 0) {
                                 lyricStage(expandable: false, compact: compact)
                                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .accessibilityElement(children: .contain)
                                     .accessibilityIdentifier("player-landscape-lyrics")
                                 footer(compact: compact, landscape: true).padding(.top, compact ? 2 : 10)
+                                    .accessibilityElement(children: .contain)
                                     .accessibilityIdentifier("player-landscape-controls")
                             }.frame(maxWidth: .infinity, maxHeight: .infinity)
                         }.padding(.horizontal, compact ? 16 : 26).padding(.bottom, compact ? 4 : 12)
-                            .accessibilityIdentifier("player-landscape-layout")
                     } else {
                         stage.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.horizontal, 20)
                         .contentShape(Rectangle())
@@ -92,7 +93,8 @@ struct PlayerView: View {
                     }
                 }.foregroundStyle(ink)
             }
-        }.preferredColorScheme(dark ? .dark : .light)
+        }.overlay(alignment: .bottom) { ResolutionNoticeView(dark: dark).padding(.bottom, 52) }
+            .preferredColorScheme(dark ? .dark : .light)
             .sheet(isPresented: $player.showQueue) { QueueView().environmentObject(store).environmentObject(player) }
             .sheet(isPresented: $menu) { PlayerMenuView(effects: $effects, chooseSpeed: $chooseSpeed).environmentObject(store).environmentObject(player) }
             .sheet(isPresented: $effects) { EffectsView() }
@@ -137,7 +139,7 @@ struct PlayerView: View {
             }
             BufferedProgress(value: player.elapsed, duration: player.duration, buffered: player.buffered, color: accent, change: player.seek).frame(height: tight ? 20 : 26)
             HStack { Text(clockText(player.elapsed)); Spacer(); Text(clockText(player.duration)) }.font(.system(size: 12).monospacedDigit()).foregroundStyle(muted)
-            Text(player.status).font(.system(size: tight ? 11 : 12, weight: .semibold)).foregroundStyle(muted).lineLimit(1).frame(maxWidth: .infinity, minHeight: tight ? 16 : 20)
+            Text(player.audioInfo.text).font(.system(size: tight ? 11 : 12, weight: .semibold)).foregroundStyle(muted).lineLimit(1).frame(maxWidth: .infinity, minHeight: tight ? 16 : 20).accessibilityIdentifier("player-audio-info")
             HStack {
                 Button { player.previous() } label: { YLIcon(systemName: "backward.end.fill", size: tight ? 24 : compact ? 28 : 33).frame(width: tight ? 44 : compact ? 50 : 62, height: tight ? 44 : compact ? 50 : 62) }.accessibilityLabel("上一首")
                 Spacer()
@@ -309,7 +311,7 @@ private struct QueueSwipeRow: View {
             })
             .onChange(of: item.id) { _, _ in reset() }
             .onChange(of: player.queue.count) { _, _ in reset() }
-            .accessibilityIdentifier("queue-row-\(position)")
+            .accessibilityElement(children: .contain).accessibilityIdentifier("queue-row-\(position)")
             .accessibilityAction(named: Text("从队列移除"), remove)
     }
     private func reset() { offset = 0; horizontal = nil; dragOrigin = 0 }

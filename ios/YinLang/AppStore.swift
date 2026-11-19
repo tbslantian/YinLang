@@ -161,7 +161,8 @@ final class AppStore: ObservableObject {
     func cacheKey(_ item: MediaItem, quality: String? = nil) -> String {
         item.id + (item.source == "library" ? ":\(nav?.identity ?? ""):\(defaults.string(forKey: "nav-bitrate") ?? "0"):\(defaults.string(forKey: "nav-format") ?? "mp3")" : item.kind == "episode" ? "" : ":\(quality ?? defaults.string(forKey: "quality") ?? "320k")")
     }
-    func resolve(_ item: MediaItem, fallback: Bool = true, useLocal: Bool = true, quality requestedQuality: String? = nil) async throws -> (URL, [String: String], String) {
+    func resolve(_ item: MediaItem, fallback: Bool = true, useLocal: Bool = true, quality requestedQuality: String? = nil, progress: ((ResolutionNotice) -> Void)? = nil) async throws -> (URL, [String: String], String) {
+        try Task.checkCancellation()
         if item.source == "library", item.raw.string("_account") != nav?.identity { throw AppFailure.message("音乐库账号已变更，请从当前音乐库选择歌曲") }
         if useLocal, let download = downloads.first(where: { $0.item.id == item.id }), FileManager.default.fileExists(atPath: Disk.documents.appendingPathComponent(download.filename).path) { return (Disk.documents.appendingPathComponent(download.filename), [:], "本机下载") }
         if useLocal, let cached = await MediaCache.shared.cached(cacheKey(item, quality: requestedQuality), books: item.kind == "episode") { return (cached, [:], "离线缓存") }
@@ -184,33 +185,60 @@ final class AppStore: ObservableObject {
         guard !sources.isEmpty else { throw AppFailure.message("请在音乐设置导入 LX JavaScript 音源") }
         var lastError = "音源解析失败"
         var capabilities: [String: JSONObject] = [:]
-        for plugin in sources { do { let runtime = try await runtime(plugin.id, scripts: plugin.runtimeScript); capabilities[plugin.id] = try await runtime.call("lxPlatforms()", timeout: 20) as? JSONObject ?? [:] } catch { lastError = error.localizedDescription } }
+        func platforms(_ plugin: Plugin) async throws -> JSONObject {
+            if let saved = capabilities[plugin.id] { return saved }
+            try Task.checkCancellation()
+            let runtime = try await runtime(plugin.id, scripts: plugin.runtimeScript)
+            let value = try await runtime.call("lxPlatforms()", timeout: 20) as? JSONObject ?? [:]
+            try Task.checkCancellation()
+            capabilities[plugin.id] = value
+            return value
+        }
         var matches: [String: [MediaItem]] = [item.source: [item]]
         // Search other supported platforms lazily after the original recording fails.
-        let alternatives = Platform.allCases.map(\.rawValue).filter { candidate in candidate != "all" && candidate != item.source && capabilities.values.contains { $0[candidate] != nil } }
+        let alternatives = fallback ? Platform.allCases.map(\.rawValue).filter { $0 != "all" && $0 != item.source } : []
         for quality in qualities {
             for platform in [item.source] + alternatives {
                 try Task.checkCancellation()
                 if matches[platform] == nil {
+                    var supported = false
+                    for plugin in sources {
+                        do { if try await platforms(plugin)[platform] != nil { supported = true; break } }
+                        catch { try Task.checkCancellation(); lastError = error.localizedDescription; capabilities[plugin.id] = [:] }
+                    }
+                    guard supported else { matches[platform] = []; continue }
                     do {
+                        progress?(ResolutionNotice(phase: .resolving, detail: "\(Platform(rawValue: platform)?.title ?? platform) · 正在查找同名歌曲"))
                         let result = try await catalog("search", ["source": platform, "query": item.title + " " + item.subtitle, "page": 1])
                         matches[platform] = result.rows("list").map { MediaItem($0) }.filter { SongMatch.same(item, $0) }.sorted { abs($0.duration - item.duration) < abs($1.duration - item.duration) }
-                    } catch { matches[platform] = [] }
+                    } catch { try Task.checkCancellation(); matches[platform] = [] }
                 }
                 for candidate in matches[platform] ?? [] {
                     for plugin in sources {
-                        guard let advertised = capabilities[plugin.id]?[platform] as? JSONObject else { continue }
-                        let supported = advertised["qualitys"] as? [String] ?? []
-                        guard supported.isEmpty || supported.contains(quality) else { continue }
+                        try Task.checkCancellation()
+                        let attempt = "\(plugin.name) · \(Platform(rawValue: platform)?.title ?? platform) · \(quality)"
                         do {
-                            activity = "\(plugin.name) · \(Platform(rawValue: platform)?.title ?? platform) · \(quality)"
+                            // Load sources only as needed. A verified winner returns
+                            // immediately, before later scripts are initialized.
+                            guard let advertised = try await platforms(plugin)[platform] as? JSONObject else { continue }
+                            let supported = advertised["qualitys"] as? [String] ?? []
+                            guard supported.isEmpty || supported.contains(quality) else { continue }
+                            activity = attempt
+                            progress?(ResolutionNotice(phase: .resolving, detail: attempt))
                             let runtime = try await runtime(plugin.id, scripts: plugin.runtimeScript)
                             let result = try await runtime.call("lxResolve(\(quote(platform)),\(quote(quality)),\(jsonText(candidate.onlineMusicInfo)))", timeout: 35) as? JSONObject ?? [:]
-                            guard let url = URL(string: result.string("url")), ["http", "https"].contains(url.scheme ?? "") else { continue }
+                            try Task.checkCancellation()
+                            guard let url = URL(string: result.string("url")), ["http", "https"].contains(url.scheme ?? "") else { throw AppFailure.message("音源没有返回有效音频地址") }
                             let headers = result["headers"] as? [String: String] ?? [:]
+                            progress?(ResolutionNotice(phase: .validating, detail: attempt))
                             try await AudioProbe(quality: quality).verify(url, headers: headers); try Task.checkCancellation()
-                            return (url, headers, activity)
-                        } catch { lastError = error.localizedDescription }
+                            progress?(ResolutionNotice(phase: .success, detail: attempt))
+                            return (url, headers, attempt)
+                        } catch {
+                            try Task.checkCancellation()
+                            lastError = error.localizedDescription
+                            progress?(ResolutionNotice(phase: .failure, detail: attempt + " · " + lastError))
+                        }
                     }
                 }
             }
