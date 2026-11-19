@@ -3,6 +3,12 @@ on:
   push:
     paths: ['ios/**', 'shared/**', 'scripts/build-catalog.mjs', 'package*.json', '.github/workflows/ios.yml', 'app/src/main/res/drawable-nodpi/**', 'app/src/main/assets/book-sources/**']
   workflow_dispatch:
+    inputs:
+      test_device:
+        description: Simulator tests to run (device IPA is always built)
+        type: choice
+        default: all
+        options: [all, iphone, ipad]
 permissions:
   contents: read
 jobs:
@@ -10,7 +16,7 @@ jobs:
     runs-on: macos-15-intel
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -71,20 +77,21 @@ jobs:
                   print(kind, device['name'], device['udid'])
           PY
       - name: Test on iPhone
+        if: ${{ inputs.test_device != 'ipad' }}
         run: |
           set -o pipefail
           xcrun simctl boot "$PHONE_ID" || true
           xcrun simctl bootstatus "$PHONE_ID" -b
           xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$PHONE_ID" -parallel-testing-enabled NO -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPhone.xcresult CODE_SIGNING_ALLOWED=NO test | tee ios-iphone-test.log
       - name: Upload iPhone test log
-        if: ${{ !cancelled() && steps.archive.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.archive.outcome == 'success' && inputs.test_device != 'ipad' }}
         uses: actions/upload-artifact@v4
         with:
           name: YinLang-iOS-iPhone-test-log
           retention-days: 30
           path: ios-iphone-test.log
       - name: Test on iPad
-        if: ${{ !cancelled() && steps.archive.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.archive.outcome == 'success' && inputs.test_device != 'iphone' }}
         run: |
           set -o pipefail
           xcrun simctl shutdown "$PHONE_ID" || true
