@@ -5,27 +5,24 @@ struct BooksView: View {
     @EnvironmentObject var store: AppStore
     @EnvironmentObject var player: Player
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                NavigationLink { BookBrowseView(search: true) } label: { Label("搜索书名或作者", systemImage: "magnifyingglass").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(16).background(.background, in: RoundedRectangle(cornerRadius: 15)) }
-                HStack(spacing: 12) {
-                    NavigationLink { BookBrowseView(search: false) } label: { ModuleCard(title: "发现", subtitle: "总有一个故事，值得听见", icon: "book.pages", color: Palette.accent).frame(height: 235) }
-                    VStack(spacing: 10) {
-                        NavigationLink { SavedView(title: "书架", type: "bookshelf") } label: { small("书架", icon: "books.vertical") }
-                        NavigationLink { PluginSettingsView(books: true) } label: { small("插件", icon: "puzzlepiece.extension") }
-                        NavigationLink { BookSettingsView() } label: { small("听书设置", icon: "slider.horizontal.3") }
+        AndroidForm {
+            NavigationLink { BookBrowseView(search: true) } label: { SearchEntry(title: "搜索有声书") }.buttonStyle(.plain)
+            GeometryReader { proxy in
+                HStack(spacing: 10) {
+                    NavigationLink { BookBrowseView(search: false) } label: { DiscoveryHero(books: true) }.frame(width: (proxy.size.width - 10) * 1.3 / 2.3)
+                    VStack(spacing: 8) {
+                        NavigationLink { SavedView(title: "书架", type: "bookshelf") } label: { LibraryShortcut(title: "书架", icon: "books.vertical") }
+                        NavigationLink { PluginSettingsView(books: true) } label: { LibraryShortcut(title: "插件", icon: "puzzlepiece.extension") }
+                        NavigationLink { BookSettingsView() } label: { LibraryShortcut(title: "听书设置", icon: "gearshape") }
                     }
                 }
-                if let current = store.nowBook { SectionTitle(title: "继续收听"); SongRow(item: current) { player.resumeBook(current) }.padding(12).background(.background, in: RoundedRectangle(cornerRadius: 15)) }
-                SectionTitle(title: "收藏的有声书")
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 130))], spacing: 18) {
-                    ForEach(store.bookshelf) { book in NavigationLink { BookDetailView(book: book) } label: { VStack(alignment: .leading, spacing: 8) { Artwork(item: book, size: 130); Text(book.title).font(.subheadline).foregroundStyle(.primary).lineLimit(2) }.frame(maxWidth: .infinity, alignment: .leading) } }
-                }
-                if store.bookshelf.isEmpty { Text("把喜欢的故事加入书架，随时接着听。").font(.subheadline).foregroundStyle(.secondary) }
-            }.padding(16).frame(maxWidth: 1000).frame(maxWidth: .infinity)
-        }.background(Palette.paper).navigationTitle("有声书").task { await store.installBundledBooks() }
+            }.frame(height: 184).buttonStyle(.plain)
+            if let current = store.nowBook { SectionTitle(title: "继续收听"); SongRow(item: current) { player.resumeBook(current) } }
+            SectionTitle(title: "我的收藏")
+            BookGrid(rows: Array(store.bookshelf.prefix(6)))
+            if store.bookshelf.isEmpty { Text("在书籍详情里加入书架，喜欢的故事会出现在这里。").font(.system(size: 14)).foregroundStyle(Palette.muted) }
+        }.androidPage("有声书").task { await store.installBundledBooks() }
     }
-    private func small(_ title: String, icon: String) -> some View { Label(title, systemImage: icon).font(.subheadline.weight(.medium)).frame(maxWidth: .infinity, alignment: .leading).padding(17).frame(height: 70).background(.background, in: RoundedRectangle(cornerRadius: 16)).foregroundStyle(.primary) }
 }
 
 struct BookBrowseView: View {
@@ -47,32 +44,23 @@ struct BookBrowseView: View {
     @State private var generation = UUID()
     private var source: JSONObject { sources.first { $0.string("id") == sourceID } ?? [:] }
     var body: some View {
-        ScrollView {
-            VStack(spacing: 15) {
-                HStack {
-                    Picker("来源", selection: $sourceID) { ForEach(Array(sources.enumerated()), id: \.offset) { _, row in Text(row.string("group") + " · " + row.string("name")).tag(row.string("id")) } }.onChange(of: sourceID) { _, _ in Task { await switchSource() } }
-                    Spacer(); Button { grid.toggle() } label: { Image(systemName: grid ? "list.bullet" : "square.grid.2x2") }.accessibilityLabel("切换网格列表")
-                }
-                if !search && !menus.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) { HStack { ForEach(Array(menus.enumerated()), id: \.offset) { _, menu in Button(menu.string("title", "name")) { category = menu.string("url"); Task { await reload() } }.buttonStyle(.bordered).tint(category == menu.string("url") ? Palette.accent : .secondary) } } }
-                }
-                if !error.isEmpty { ErrorPanel(text: error) { Task { await reload() } } }
-                if grid {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 130))], spacing: 20) { ForEach(rows) { book in NavigationLink { BookDetailView(book: book) } label: { VStack(alignment: .leading, spacing: 7) { Artwork(item: book, size: 130); Text(book.title).font(.subheadline).foregroundStyle(.primary).lineLimit(2); Text(book.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading) } } }
-                } else {
-                    LazyVStack { ForEach(rows) { book in NavigationLink { BookDetailView(book: book) } label: { HStack(spacing: 14) { Artwork(item: book, size: 65); VStack(alignment: .leading, spacing: 7) { Text(book.title).font(.headline).foregroundStyle(.primary); Text(book.subtitle).font(.caption).foregroundStyle(.secondary) }; Spacer() }.padding(.vertical, 6) } } }
-                }
-                if loading { ProgressView().padding() }
-                if more && !loading { Button("加载更多") { Task { await load(next: true) } }.padding().onAppear { Task { await load(next: true) } } }
-                if rows.isEmpty && !loading && error.isEmpty { ErrorPanel(text: search ? "输入书名或作者开始搜索" : "该分类暂无内容") }
-            }.padding(16).frame(maxWidth: 1100).frame(maxWidth: .infinity)
-        }.background(Palette.paper).navigationTitle(search ? "搜索有声书" : "发现有声书")
-            .searchable(text: $query, prompt: "书名或作者").onSubmit(of: .search) { Task { await reload() } }
-            .refreshable { await reload() }
-            .task {
-                do { sources = try await store.bookSources().filter { $0[search ? "search" : "discover"] as? Bool == true }; sourceID = sources.first?.string("id") ?? "" }
-                catch { self.error = error.localizedDescription }
+        AndroidForm {
+            if search { AndroidSearch(text: $query, hint: "书名或作者") { Task { await reload() } } }
+            HStack {
+                AndroidChoice(title: "来源", selection: $sourceID, options: sources.map { ($0.string("id"), $0.string("group") + " · " + $0.string("name")) }).onChange(of: sourceID) { _, _ in Task { await switchSource() } }
+                Spacer()
+                Button { grid.toggle() } label: { YLIcon(systemName: grid ? "list.bullet" : "square.grid.2x2").frame(width: 44, height: 44) }.buttonStyle(.plain).accessibilityLabel("切换网格列表")
             }
+            if !search && !menus.isEmpty { AndroidChips(names: menus.map { ($0.string("url"), $0.string("title", "name")) }, selection: $category).onChange(of: category) { _, _ in Task { await reload() } } }
+            if !error.isEmpty { ErrorPanel(text: error) { Task { await reload() } } }
+            if grid { BookGrid(rows: rows) }
+            else { LazyVStack(spacing: 9) { ForEach(rows) { book in NavigationLink { BookDetailView(book: book) } label: { MediaRow(item: book) }.buttonStyle(.plain) } } }
+            if loading { ProgressView().frame(maxWidth: .infinity).padding() }
+            if more && !loading { Button("加载更多") { Task { await load(next: true) } }.onAppear { Task { await load(next: true) } } }
+            if rows.isEmpty && !loading && error.isEmpty { ErrorPanel(text: search ? "输入书名或作者开始搜索" : "该分类暂无内容") }
+        }.androidPage(search ? "搜索有声书" : "发现", category: "有声书") { Button { Task { await reload() } } label: { YLIcon(systemName: "arrow.clockwise").frame(width: 44, height: 44) }.accessibilityLabel("刷新列表") }
+            .refreshable { await reload() }
+            .task { do { sources = try await store.bookSources().filter { $0[search ? "search" : "discover"] as? Bool == true }; sourceID = sources.first?.string("id") ?? ""; await switchSource() } catch { self.error = error.localizedDescription } }
     }
     private func switchSource() async {
         generation = UUID(); loading = false; rows = []; menus = []; category = ""; nextPage = ""; seenPages = []; error = ""
@@ -123,15 +111,14 @@ struct BookDetailView: View {
     @State private var reverse = false
     var displayed: [MediaItem] { let list = query.isEmpty ? episodes : episodes.filter { $0.title.localizedCaseInsensitiveContains(query) }; return reverse ? Array(list.reversed()) : list }
     var body: some View {
-        List {
-            HStack(alignment: .top, spacing: 18) { Artwork(item: book, size: 100); VStack(alignment: .leading, spacing: 10) { Text(book.title).font(.headline); Text(book.subtitle).font(.caption).foregroundStyle(.secondary); Button(store.bookshelf.contains(where: { $0.id == book.id }) ? "移出书架" : "加入书架", systemImage: "bookmark") { store.toggleShelf(book) } } }.listRowBackground(Color.clear)
-            if !description.isEmpty { Text(description).font(.subheadline).foregroundStyle(.secondary) }
-            if !episodes.isEmpty { Button("从第一章播放", systemImage: "play.fill") { player.play(displayed) } }
+        AndroidList {
+            HStack(alignment: .top, spacing: 16) { Artwork(item: book, size: 100); VStack(alignment: .leading, spacing: 10) { Text(book.title).font(.system(size: 22, weight: .bold)); Text(book.subtitle).font(.system(size: 13)).foregroundStyle(Palette.muted); Button(store.bookshelf.contains(where: { $0.id == book.id }) ? "移出书架" : "加入书架", systemImage: "bookmark") { store.toggleShelf(book) }.foregroundStyle(Palette.accent) } }.padding(.vertical, 10)
+            if !description.isEmpty { Text(description).font(.system(size: 14)).foregroundStyle(Palette.muted).padding(.vertical, 8) }
+            HStack(spacing: 12) { if !episodes.isEmpty { Button("从第一章播放") { player.play(displayed) }.buttonStyle(AndroidButtonStyle(primary: true)); Button("继续收听") { let saved = store.nowBook; if let saved, saved.raw.string("_book") == book.id { player.resumeBook(saved) } else { player.play(episodes) } }.buttonStyle(AndroidButtonStyle()) }; Spacer(); Button { reverse.toggle() } label: { YLIcon(systemName: "arrow.up.arrow.down").frame(width: 44, height: 44) }.accessibilityLabel("章节排序") }
+            AndroidSearch(text: $query, hint: "搜索章节")
             ForEach(displayed) { item in SongRow(item: item) { player.play(displayed, at: displayed.firstIndex(of: item) ?? 0) } }
-            if loading { ProgressView() }; if !error.isEmpty { ErrorPanel(text: error) { Task { await load() } } }
-        }.navigationTitle("章节").navigationBarTitleDisplayMode(.inline).searchable(text: $query, prompt: "搜索章节")
-            .toolbar { Button { reverse.toggle() } label: { Image(systemName: "arrow.up.arrow.down") }.accessibilityLabel("章节排序") }
-            .task { if episodes.isEmpty { await load() } }.refreshable { await load() }
+            if loading { ProgressView().frame(maxWidth: .infinity) }; if !error.isEmpty { ErrorPanel(text: error) { Task { await load() } } }
+        }.androidPage(book.title, category: "有声书").task { if episodes.isEmpty { await load() } }.refreshable { await load() }
     }
     private func load() async {
         guard !loading else { return }; loading = true; error = ""; defer { loading = false }
@@ -145,7 +132,7 @@ struct BookDetailView: View {
 
 struct BookSettingsView: View {
     @AppStorage("book-cache") private var cache = 512
-    var body: some View { Form { Section("缓存") { Stepper("听书缓存：\(cache) MB", value: $cache, in: 0...8192, step: 128); Button("清除听书缓存") { Task { await MediaCache.shared.clear(books: true) } } }; Section { NavigationLink("管理听书插件") { PluginSettingsView(books: true) }; Text("章节进度自动保存，播放倍速按书籍分别记忆。").font(.caption).foregroundStyle(.secondary) } }.navigationTitle("听书设置") }
+    var body: some View { AndroidForm { AndroidSection("缓存") { AndroidChoice(title: "听书缓存", selection: Binding(get: { String(cache) }, set: { cache = Int($0) ?? 512 }), options: [0,128,256,512,1024,2048,4096,8192].map { (String($0), $0 == 0 ? "关闭" : "\($0) MB") }); Button("清除听书缓存") { Task { await MediaCache.shared.clear(books: true) } } }; AndroidSection { NavigationLink("管理听书插件") { PluginSettingsView(books: true) }; Text("章节进度自动保存，播放倍速按书籍分别记忆。").font(.caption).foregroundStyle(Palette.muted) } }.androidPage("听书设置") }
 }
 
 struct LoginWebView: UIViewRepresentable {

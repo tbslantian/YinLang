@@ -1,0 +1,10 @@
+{
+  "app/src/main/java/app/soundshelf/UiIcon.java": "125adb27931c1b29693a3b855ddd03f89ba565e7b63ebfd6d7ed2bcf7e57b618",
+  "app/src/main/java/app/soundshelf/HomeTemplate.java": "71bb3e612104ee53a52b0c97825174aab8427b04f7c56edcbb28b32d8e74deda",
+  "app/src/main/java/app/soundshelf/HomeEntryArtwork.java": "cf669da3a1c5b50e70cc93863abb1fd4b62105f73b28c3b5284f77009a24b476",
+  "app/src/main/res/drawable/hero_books.xml": "7f68601801fb5f37839cf90945463756c703869cee7c328ff064832dc7e66099",
+  "app/src/main/res/drawable/hero_music.xml": "a0cb74b41e23e317a0f81de1f1cfadc27c999920cf7b2209918e2d12c88211f4",
+  "app/src/main/res/drawable/library_discovery_record.xml": "6dfd2480ad693ee1c531410748a31e3bc62c22039b9cb56a65e44342d84f8a71",
+  "app/src/main/res/drawable/discovery_grooves.xml": "c2cb9982430f4e87aa57b534d227e5ede7fe93e226f9abdcee56547a8f27e270",
+  "app/src/main/res/drawable/ic_settings_cupertino.xml": "faec41d2906e7b1a44fc2f2ff893e452c483deb42f34361884d3f256c087afb7"
+}

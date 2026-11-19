@@ -21,49 +21,42 @@ struct CatalogView: View {
     @State private var showLink = false
     @State private var linkedPlaylist: MediaItem?
     var title: String { mode == "search" ? "搜索音乐" : mode == "charts" ? "在线排行榜" : "在线歌单" }
+    init(mode: String, library: Bool = false) { self.mode = mode; _platform = State(initialValue: mode == "charts" ? "wy" : "all"); _librarySearch = State(initialValue: library) }
     var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                if mode == "search", store.nav != nil { Toggle("搜索音乐库", isOn: $librarySearch).onChange(of: librarySearch) { _, _ in Task { await reload() } } }
-                if !librarySearch {
-                    Picker("平台", selection: $platform) { ForEach(Platform.allCases) { Text($0.title).tag($0.rawValue) } }.pickerStyle(.segmented).onChange(of: platform) { _, _ in Task { await reload(); await loadTags() } }
-                }
-                if mode == "lists" {
-                    HStack {
-                        Picker("排序", selection: $sort) { Text("热门").tag("@hot"); Text("最新").tag("@new") }.onChange(of: sort) { _, _ in Task { await reload() } }
-                        Menu {
-                            Button("全部分类") { tag = ""; Task { await reload() } }
-                            ForEach(Array(tags.enumerated()), id: \.offset) { _, row in Button(row.string("name")) { tag = row.string("id"); Task { await reload() } } }
-                        } label: { Label(tag.isEmpty ? "分类" : "已选分类", systemImage: "line.3.horizontal.decrease") }
-                        Spacer()
-                        Button { grid.toggle() } label: { Image(systemName: grid ? "list.bullet" : "square.grid.2x2") }.accessibilityLabel("切换网格列表")
-                        Button { showLink = true } label: { Image(systemName: "link") }.accessibilityLabel("按链接打开")
-                    }.font(.subheadline)
-                }
-                if !error.isEmpty { ErrorPanel(text: error) { Task { await reload(refresh: true) } } }
-                if rows.isEmpty && !loading && error.isEmpty { ErrorPanel(text: mode == "search" ? "输入歌名或歌手，开始寻找喜欢的声音" : "暂无内容") }
-                if mode == "search" {
-                    LazyVStack { ForEach(rows) { item in SongRow(item: item) { player.play(rows, at: rows.firstIndex(of: item) ?? 0) } } }
-                } else if grid {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 16)], spacing: 20) {
-                        ForEach(filtered) { item in NavigationLink { CatalogDetailView(item: item, chart: mode == "charts") } label: { VStack(alignment: .leading, spacing: 9) { Artwork(item: item, size: 145); Text(item.title).font(.subheadline.weight(.medium)).lineLimit(2).foregroundStyle(.primary); Text(Platform(rawValue: item.source)?.title ?? "").font(.caption).foregroundStyle(.secondary) }.frame(maxWidth: .infinity, alignment: .leading) } }
+        GeometryReader { proxy in
+            let count = max(1, min(4, Int((proxy.size.width - 32) / 175)))
+            let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: max(proxy.size.width < 297 ? 1 : 2, count))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if mode == "search", store.nav != nil { AndroidChips(names: [("online", "在线音乐"), ("library", "音乐库")], selection: Binding(get: { librarySearch ? "library" : "online" }, set: { librarySearch = $0 == "library"; Task { await reload() } })) }
+                    AndroidSearch(text: $query, hint: mode == "charts" ? "搜索榜名" : mode == "search" ? "歌名、歌手、专辑" : "搜索歌单") { if mode != "charts" { Task { await reload() } } }
+                    if !librarySearch { AndroidChips(names: Platform.allCases.filter { mode != "charts" || $0.rawValue != "all" }.map { ($0.rawValue, $0.title) }, selection: $platform).onChange(of: platform) { _, _ in Task { await reload(); await loadTags() } } }
+                    if mode == "lists" {
+                        HStack(spacing: 14) {
+                            AndroidChoice(title: "分类", selection: $tag, options: [("", "全部分类")] + tags.map { ($0.string("id"), $0.string("name")) }).onChange(of: tag) { _, _ in Task { await reload() } }
+                            AndroidChoice(title: "排序", selection: $sort, options: [("@hot", "最热"), ("@new", "最新")]).onChange(of: sort) { _, _ in Task { await reload() } }
+                            Spacer()
+                            Button { grid.toggle() } label: { YLIcon(systemName: grid ? "list.bullet" : "square.grid.2x2") }.accessibilityLabel("切换网格列表")
+                            Button { showLink = true } label: { YLIcon(systemName: "link") }.accessibilityLabel("按链接打开")
+                        }.font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.accent).frame(minHeight: 44)
                     }
-                } else {
-                    LazyVStack { ForEach(filtered) { item in NavigationLink { CatalogDetailView(item: item, chart: mode == "charts") } label: { HStack { Artwork(item: item); Text(item.title).foregroundStyle(.primary); Spacer(); Image(systemName: "chevron.right").foregroundStyle(.secondary) }.padding(.vertical, 6) } } }
-                }
-                if loading { ProgressView().padding() }
-                if more && !loading { Button("加载更多") { Task { await load(page: page + 1) } }.padding().onAppear { Task { await load(page: page + 1) } } }
-            }.padding(16).frame(maxWidth: 1100).frame(maxWidth: .infinity)
-        }.background(Palette.paper).navigationTitle(title)
-            .searchable(text: $query, prompt: mode == "charts" ? "搜索榜名" : "关键词")
-            .onSubmit(of: .search) { if mode != "charts" { Task { await reload() } } }
-            .refreshable { await reload(refresh: true) }
+                    if !error.isEmpty { ErrorPanel(text: error) { Task { await reload(refresh: true) } } }
+                    if rows.isEmpty && !loading && error.isEmpty { ErrorPanel(text: mode == "search" ? "输入歌名或歌手，开始寻找喜欢的声音" : "暂无内容") }
+                    if mode == "search" { LazyVStack(spacing: 6) { ForEach(rows) { item in SongRow(item: item) { player.play(rows, at: rows.firstIndex(of: item) ?? 0) } } } }
+                    else if grid {
+                        LazyVGrid(columns: columns, spacing: 8) {
+                            ForEach(filtered) { item in NavigationLink { CatalogDetailView(item: item, chart: mode == "charts") } label: { CatalogCard(item: item, chart: mode == "charts", height: max(134, min(178, ((proxy.size.width - 40) / CGFloat(columns.count)) * 0.8))) } }
+                        }
+                    } else { LazyVStack(spacing: 8) { ForEach(filtered) { item in NavigationLink { CatalogDetailView(item: item, chart: mode == "charts") } label: { MediaRow(item: item) } } } }
+                    if loading { ProgressView().frame(maxWidth: .infinity).padding() }
+                    if more && !loading { Button("加载更多") { Task { await load(page: page + 1) } }.buttonStyle(AndroidButtonStyle()).onAppear { Task { await load(page: page + 1) } } }
+                }.padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 22)
+            }
+        }.androidPage(title, category: "在线音乐") { Button { Task { await reload(refresh: true) } } label: { YLIcon(systemName: "arrow.clockwise").frame(width: 44, height: 44) }.accessibilityLabel("刷新列表") }
+            .buttonStyle(.plain).refreshable { await reload(refresh: true) }
             .navigationDestination(item: $linkedPlaylist) { item in CatalogDetailView(item: item, chart: false) }
             .task { if rows.isEmpty && mode != "search" { await reload(); await loadTags() } }
-            .alert("打开歌单", isPresented: $showLink) {
-                TextField("歌单 ID 或链接", text: $link)
-                Button("打开") { openLink() }; Button("取消", role: .cancel) {}
-            } message: { Text("先选择对应平台，再填写歌单 ID 或分享链接") }
+            .alert("打开歌单", isPresented: $showLink) { TextField("歌单 ID 或链接", text: $link); Button("打开") { openLink() }; Button("取消", role: .cancel) {} } message: { Text("先选择对应平台，再填写歌单 ID 或分享链接") }
     }
     var filtered: [MediaItem] { mode == "charts" && !query.isEmpty ? rows.filter { $0.title.localizedCaseInsensitiveContains(query) } : rows }
     private func reload(refresh: Bool = false) async { generation = UUID(); loading = false; rows = []; more = false; page = 1; await load(page: 1, refresh: refresh) }
@@ -112,16 +105,15 @@ struct CatalogDetailView: View {
     @State private var query = ""
     var filtered: [MediaItem] { query.isEmpty ? rows : rows.filter { ($0.title + $0.subtitle).localizedCaseInsensitiveContains(query) } }
     var body: some View {
-        List {
-            HStack(spacing: 18) { Artwork(item: item, size: 100); VStack(alignment: .leading, spacing: 12) { Text(item.title).font(.title3.bold()); Text(Platform(rawValue: item.source)?.title ?? "").font(.caption).foregroundStyle(.secondary); Button(store.followed.contains(where: { $0.id == item.id }) ? "取消关注" : "关注歌单", systemImage: "bookmark") { store.toggleFollow(item) } } }.listRowBackground(Color.clear)
-            if !rows.isEmpty { Button("播放全部（\(filtered.count)）", systemImage: "play.fill") { player.play(filtered) } }
-            ForEach(filtered) { song in SongRow(item: song) { player.play(filtered, at: filtered.firstIndex(of: song) ?? 0) } }
+        AndroidList {
+            HStack(spacing: 16) { Artwork(item: item, size: 100); VStack(alignment: .leading, spacing: 10) { Text(item.title).font(.system(size: 20, weight: .bold)); Text(Platform(rawValue: item.source)?.title ?? "").font(.system(size: 13)).foregroundStyle(Palette.muted); Button { store.toggleFollow(item) } label: { HStack { YLIcon(systemName: "bookmark", size: 18); Text(store.followed.contains(where: { $0.id == item.id }) ? "取消关注" : "关注歌单") } }.foregroundStyle(Palette.accent) } }.padding(.vertical, 10)
+            AndroidSearch(text: $query, hint: "在歌单中找歌")
+            if !rows.isEmpty { Button { player.play(filtered) } label: { HStack { YLIcon(systemName: "play.fill", size: 19); Text("播放全部（\(filtered.count)）").font(.system(size: 15, weight: .bold)); Spacer() }.foregroundStyle(Palette.accent).padding(.vertical, 14) } }
+            ForEach(Array(filtered.enumerated()), id: \.offset) { position, song in SongRow(item: song, rank: chart ? position + 1 : nil) { player.play(filtered, at: position) } }
             if loading { ProgressView().frame(maxWidth: .infinity) }
             if !error.isEmpty { ErrorPanel(text: error) { Task { await load(refresh: true) } } }
-            if more && !loading { Button("加载更多") { Task { await load(next: true) } } }
-        }.navigationTitle(item.title).navigationBarTitleDisplayMode(.inline).searchable(text: $query, prompt: "在歌单中找歌")
-            .toolbar { Button { Task { await load(refresh: true) } } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("刷新列表") }
-            .task { if rows.isEmpty { await load() } }.refreshable { await load(refresh: true) }
+            if more && !loading { Button("加载更多") { Task { await load(next: true) } }.buttonStyle(AndroidButtonStyle()) }
+        }.androidPage(item.title, category: chart ? "在线排行榜" : "在线歌单") { Button { Task { await load(refresh: true) } } label: { YLIcon(systemName: "arrow.clockwise").frame(width: 44, height: 44) }.accessibilityLabel("刷新列表") }.task { if rows.isEmpty { await load() } }.refreshable { await load(refresh: true) }
     }
     private func load(next: Bool = false, refresh: Bool = false) async {
         guard !loading else { return }; loading = true; error = ""; defer { loading = false }

@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Network
 
 struct Navidrome {
     let base: String
@@ -17,6 +18,9 @@ struct Navidrome {
         guard let url = parts.url else { throw AppFailure.message("服务器地址无效") }; return url
     }
     func get(_ command: String, _ parameters: [URLQueryItem] = []) async throws -> JSONObject {
+#if DEBUG
+        if UITestFixtures.active { return UITestFixtures.nav(command) }
+#endif
         let (data, response) = try await URLSession.shared.data(from: endpoint(command, parameters))
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw AppFailure.message("音乐库服务器请求失败") }
         let root = (try JSONSerialization.jsonObject(with: data) as? JSONObject)?.object("subsonic-response") ?? [:]
@@ -40,10 +44,15 @@ struct Navidrome {
     }
     func stream(_ item: MediaItem, original: Bool = false) throws -> URL {
         let defaults = UserDefaults.standard
-        let bitrate = original ? "0" : defaults.string(forKey: "nav-bitrate") ?? "0"
+        let networkKey = NetworkRoute.shared.cellular ? "nav-bitrate-mobile" : "nav-bitrate-wifi"
+        let bitrate = original ? "0" : defaults.string(forKey: networkKey) ?? defaults.string(forKey: "nav-bitrate") ?? "0"
         return try endpoint(original ? "download" : "stream", [.init(name: "id", value: item.key), .init(name: "maxBitRate", value: bitrate), .init(name: "format", value: bitrate == "0" ? "raw" : defaults.string(forKey: "nav-format") ?? "mp3")])
     }
-    func cover(_ id: String, size: Int = 400) -> String { (try? endpoint("getCoverArt", [.init(name: "id", value: id), .init(name: "size", value: "\(size)")]).absoluteString) ?? "" }
+    func cover(_ id: String, size: Int = 400) -> String {
+#if DEBUG
+        if UITestFixtures.active { return "fixture:home_music_light" }
+#endif
+        return (try? endpoint("getCoverArt", [.init(name: "id", value: id), .init(name: "size", value: "\(size)")]).absoluteString) ?? "" }
     func lyrics(_ item: MediaItem) async -> String {
         if let result = try? await get("getLyricsBySongId", [.init(name: "id", value: item.key)]) {
             let lists = result.object("lyricsList").rows("structuredLyrics")
@@ -58,4 +67,11 @@ struct Navidrome {
         }
         return (try? await get("getLyrics", [.init(name: "artist", value: item.subtitle), .init(name: "title", value: item.title)]).object("lyrics").string("value")) ?? ""
     }
+}
+
+private final class NetworkRoute: @unchecked Sendable {
+    static let shared = NetworkRoute()
+    private let monitor = NWPathMonitor()
+    private init() { monitor.start(queue: DispatchQueue(label: "YinLang.NetworkRoute")) }
+    var cellular: Bool { monitor.currentPath.usesInterfaceType(.cellular) }
 }

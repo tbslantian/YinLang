@@ -5,14 +5,20 @@ struct YinLangApp: App {
     @StateObject private var store = AppStore()
     @StateObject private var player = Player()
     @AppStorage("appearance") private var appearance = "light"
+    @AppStorage("personal-accent") private var accent = "original"
+    @AppStorage("personal-theme") private var theme = "default"
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 RootView().environmentObject(store).environmentObject(player)
-                    .tint(Palette.accent).preferredColorScheme(Appearance.scheme(appearance, date: context.date))
+                    .tint(Palette.accent).environment(\.androidAppearanceRevision, accent + theme).preferredColorScheme(Appearance.scheme(appearance, date: context.date))
             }
-                .onAppear { player.attach(store) }
+                .onAppear { player.attach(store)
+#if DEBUG
+                    UITestFixtures.prepare(store, player)
+#endif
+                }
                 .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await store.refreshIfDue() } } }
                 .onOpenURL { url in
                     Task {
@@ -33,24 +39,19 @@ enum Destination: String, CaseIterable, Identifiable {
 }
 
 struct RootView: View {
-    @Environment(\.horizontalSizeClass) private var sizeClass
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var player: Player
-    @State private var selection: Destination? = .home
     var body: some View {
-        Group {
-            if sizeClass == .regular {
-                NavigationSplitView {
-                    List(Destination.allCases, selection: $selection) { page in Label(page.title, systemImage: page.icon).tag(page) }.navigationTitle("音浪")
-                } detail: { NavigationStack { destination(selection ?? .home) } }
-            } else { NavigationStack { HomeView() } }
+        NavigationStack {
+#if DEBUG
+            if UITestFixtures.active { UITestScreen() } else { HomeView() }
+#else
+            HomeView()
+#endif
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { if player.current != nil { MiniPlayer() } }
-        .sheet(isPresented: $player.showPlayer) { PlayerView().environmentObject(store).environmentObject(player) }
+        .fullScreenCover(isPresented: $player.showPlayer) { PlayerView().environmentObject(store).environmentObject(player) }
         .sheet(isPresented: Binding(get: { player.showQueue && !player.showPlayer }, set: { player.showQueue = $0 })) { QueueView().environmentObject(store).environmentObject(player) }
         .alert("音浪", isPresented: Binding(get: { store.message != nil }, set: { if !$0 { store.message = nil } })) { Button("好") { store.message = nil } } message: { Text(store.message ?? "") }
-    }
-    @ViewBuilder private func destination(_ page: Destination) -> some View {
-        switch page { case .home: HomeView(); case .music: MusicView(); case .library: LibraryView(); case .books: BooksView(); case .downloads: DownloadsView(); case .settings: SettingsView() }
     }
 }

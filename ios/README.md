@@ -1,6 +1,14 @@
 # 音浪 iOS / iPadOS
 
-原生 SwiftUI 通用应用，最低 iOS / iPadOS 17。iPhone 使用导航页面，iPad 使用可折叠侧栏，支持横竖屏和可调整窗口。首页默认经典影像，直接复用安卓版 `home_music_light/dark`、`home_books_light/dark` 原图。
+原生 SwiftUI 通用应用，最低 iOS / iPadOS 17。iPhone 与 iPad 使用同一套安卓页面结构，iPad 仅扩展可用宽度、封面网格列数并支持横竖屏，不增加侧栏。首页默认经典影像，直接复用安卓版 `home_music_light/dark`、`home_books_light/dark` 原图。
+
+## 0.8.4 安卓界面风格同步
+
+- 全部应用页面复用安卓配色、字号、间距、圆角和自定义标题栏，移除 iOS 大导航标题、系统分组表单及 iPad 独立侧栏。
+- 原样复用首页照片；从安卓 `UiIcon`、`HomeEntryArtwork` 绘图代码导出图标与画廊/电台插画；安卓矢量资源同步为 SVG。`DesignAssets/sources.json` 保存素材来源校验值，更新安卓后可运行 `python ios/scripts/export-android-design.py` 重新导出（需要 JDK 17）。Cupertino 齿轮继续遵守仓库 MIT 许可。
+- 音乐入口固定两列，音乐库与听书保留 1.3:1 主卡/快捷入口结构，榜单与书架仅随宽度增加列数。播放器保持封面在上、进度与控制在下，iPad 不切换双列。
+- 同步迷你条进度、单/双行歌词、播放器明暗记忆、歌词滑动、缓冲进度、循环按钮点击切换及长按选择；个性化和服务器地址分项与安卓入口结构保持一致。
+- Debug 截图夹具覆盖主要页面、浅/深色、横/竖屏和三套首页模板，Release 不编译测试夹具。文件导入、系统权限、系统 AirPlay 选择器和键盘仍由 iOS 提供。
 
 ## 0.8.3 播放与音源名称修复
 

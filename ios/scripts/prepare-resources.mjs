@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, existsSync, copyFileSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, existsSync, copyFileSync, writeFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -21,6 +21,12 @@ for (const name of ['home_music_light.jpg','home_music_dark.jpg','home_books_lig
   mkdirSync(destination, { recursive: true })
   copyFileSync(path.join(root, 'app/src/main/res/drawable-nodpi', name), path.join(destination, name))
   writeFileSync(path.join(destination, 'Contents.json'), JSON.stringify({images:[{filename:name, idiom:'universal'}], info:{author:'xcode', version:1}},null,2))
+}
+for (const name of readdirSync(path.join(root, 'ios/DesignAssets')).filter(name => /\.(png|svg)$/.test(name))) {
+  const destination = path.join(assets, `${path.parse(name).name}.imageset`)
+  mkdirSync(destination, {recursive:true})
+  copyFileSync(path.join(root, 'ios/DesignAssets', name), path.join(destination, name))
+  writeFileSync(path.join(destination, 'Contents.json'), JSON.stringify({images:[{filename:name,idiom:'universal'}],info:{author:'xcode',version:1}},null,2))
 }
 const icon = path.join(assets, 'AppIcon.appiconset')
 mkdirSync(icon, {recursive: true})

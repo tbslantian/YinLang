@@ -33,7 +33,7 @@ def phase(name, isa, files):
 def configs(name, settings):
     ids = []
     for config in ['Debug', 'Release']:
-        config_settings = settings | ({'SWIFT_OPTIMIZATION_LEVEL': '-Onone', 'GCC_OPTIMIZATION_LEVEL': '0', 'ENABLE_TESTABILITY': 'YES'} if config == 'Debug' else {'SWIFT_OPTIMIZATION_LEVEL': '-O', 'SWIFT_COMPILATION_MODE': 'wholemodule'})
+        config_settings = settings | ({'SWIFT_ACTIVE_COMPILATION_CONDITIONS': 'DEBUG', 'SWIFT_OPTIMIZATION_LEVEL': '-Onone', 'GCC_OPTIMIZATION_LEVEL': '0', 'ENABLE_TESTABILITY': 'YES'} if config == 'Debug' else {'SWIFT_OPTIMIZATION_LEVEL': '-O', 'SWIFT_COMPILATION_MODE': 'wholemodule'})
         body = ' '.join(f'{key} = {quoted(str(value))};' for key, value in config_settings.items())
         ids.append(obj(name + config, f'{{isa = XCBuildConfiguration; buildSettings = {{{body}}}; name = {config}; }}'))
     return obj(name + 'configs', f'{{isa = XCConfigurationList; buildConfigurations = {array(ids)}; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; }}')
@@ -51,7 +51,7 @@ for name, ext, kind in [('YinLang', 'app', 'wrapper.application'), ('YinLangTest
 product_group = obj('products', f'{{isa = PBXGroup; children = {array(products)}; name = Products; sourceTree = "<group>"; }}')
 group = obj('mainGroup', f'{{isa = PBXGroup; children = {array(app_sources + unit_sources + ui_sources + [assets, runtime, plist, header, product_group])}; sourceTree = "<group>"; }}')
 common = {'IPHONEOS_DEPLOYMENT_TARGET':'17.0', 'SWIFT_VERSION':'5.0', 'TARGETED_DEVICE_FAMILY':'1,2', 'SDKROOT':'iphoneos', 'CODE_SIGN_STYLE':'Automatic', 'CLANG_ENABLE_MODULES':'YES', 'SWIFT_EMIT_LOC_STRINGS':'YES', 'SUPPORTED_PLATFORMS':'iphoneos iphonesimulator', 'SUPPORTS_MACCATALYST':'NO'}
-app_config = configs('app', common | {'PRODUCT_BUNDLE_IDENTIFIER':'app.yinlang.ios', 'PRODUCT_NAME':'YinLang', 'INFOPLIST_FILE':'YinLang/Info.plist', 'SWIFT_OBJC_BRIDGING_HEADER':'YinLang/Runtime/Bridge.h', 'OTHER_LDFLAGS':'$(inherited) -lz', 'MARKETING_VERSION':'0.8.3', 'CURRENT_PROJECT_VERSION':'4', 'LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks', 'ASSETCATALOG_COMPILER_APPICON_NAME':'AppIcon'})
+app_config = configs('app', common | {'PRODUCT_BUNDLE_IDENTIFIER':'app.yinlang.ios', 'PRODUCT_NAME':'YinLang', 'INFOPLIST_FILE':'YinLang/Info.plist', 'SWIFT_OBJC_BRIDGING_HEADER':'YinLang/Runtime/Bridge.h', 'OTHER_LDFLAGS':'$(inherited) -lz', 'MARKETING_VERSION':'0.8.4', 'CURRENT_PROJECT_VERSION':'5', 'LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks', 'ASSETCATALOG_COMPILER_APPICON_NAME':'AppIcon'})
 app_phases = [phase('appSources','PBXSourcesBuildPhase',app_sources), phase('appFrameworks','PBXFrameworksBuildPhase',[]), phase('appResources','PBXResourcesBuildPhase',[assets,runtime])]
 app_target = obj('appTarget', f'{{isa = PBXNativeTarget; buildConfigurationList = {app_config}; buildPhases = {array(app_phases)}; buildRules = (); dependencies = (); name = YinLang; productName = YinLang; productReference = {products[0]}; productType = "com.apple.product-type.application"; }}')
 targets = [app_target]

@@ -67,6 +67,9 @@ final class AppStore: ObservableObject {
     }
     func invalidate(_ id: String) { runtimes.removeValue(forKey: id)?.close(); starts.removeValue(forKey: id)?.cancel() }
     func catalog(_ operation: String, _ args: JSONObject, refresh: Bool = false) async throws -> JSONObject {
+#if DEBUG
+        if UITestFixtures.active { return UITestFixtures.catalog(operation) }
+#endif
         let key = "catalog-" + Disk.hash(operation + jsonText(args)) + ".json"
         let file = Disk.directory(Disk.cache.appendingPathComponent("catalog")).appendingPathComponent(key)
         if !refresh, let info = try? file.resourceValues(forKeys: [.contentModificationDateKey]), Date().timeIntervalSince(info.contentModificationDate ?? .distantPast) < 10800,
@@ -109,6 +112,9 @@ final class AppStore: ObservableObject {
         defaults.set(Date(), forKey: "playlist-update-date")
     }
     func refreshIfDue() async {
+#if DEBUG
+        if UITestFixtures.active { return }
+#endif
         let now = Date()
         if defaults.bool(forKey: "auto-source-updates"), now.timeIntervalSince(defaults.object(forKey: "source-update-date") as? Date ?? .distantPast) >= 86400 { await updateSources() }
         let interval = defaults.object(forKey: "playlist-update-hours") as? Int ?? 6
@@ -121,6 +127,9 @@ final class AppStore: ObservableObject {
         try await install(bytes, name: url.lastPathComponent, address: address, books: books)
     }
     func installBundledBooks() async {
+#if DEBUG
+        if UITestFixtures.active { return }
+#endif
         guard !defaults.bool(forKey: "bundled-books-installed") else { return }
         guard let url = Bundle.main.url(forResource: "Sources-v5.7", withExtension: "zip", subdirectory: "Runtime") else { return }
         do {
@@ -129,6 +138,9 @@ final class AppStore: ObservableObject {
         } catch { message = error.localizedDescription }
     }
     func bookSources() async throws -> [JSONObject] {
+#if DEBUG
+        if UITestFixtures.active { return [UITestFixtures.source] }
+#endif
         await installBundledBooks()
         var sources: [JSONObject] = []
         for plugin in plugins where plugin.books && plugin.enabled {
@@ -139,6 +151,9 @@ final class AppStore: ObservableObject {
         return sources
     }
     func bookCall(_ source: String, pluginID: String, action: String, args: [Any]) async throws -> Any {
+#if DEBUG
+        if UITestFixtures.active { return UITestFixtures.bookCall(action) }
+#endif
         guard let plugin = plugins.first(where: { $0.id == pluginID && $0.enabled }) else { throw AppFailure.message("听书插件已停用或移除") }
         let runtime = try await runtime(plugin.id, scripts: plugin.runtimeScript)
         return try await runtime.call("bookCall(\(quote(source)),\(quote(action)),\(jsonText(args)))")
@@ -244,6 +259,9 @@ final class AppStore: ObservableObject {
     }
     func deleteDownload(_ id: String) { if let item = downloads.first(where: { $0.id == id }) { try? FileManager.default.removeItem(at: Disk.documents.appendingPathComponent(item.filename)); downloads.removeAll { $0.id == id } } }
     func server(_ path: String, method: String = "GET", body: JSONObject? = nil) async throws -> JSONObject {
+#if DEBUG
+        if UITestFixtures.active { return ["jobs": []] }
+#endif
         guard let url = URL(string: (defaults.string(forKey: "server-url") ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path), ["https", "http"].contains(url.scheme ?? "") else { throw AppFailure.message("请先配置下载服务器") }
         var request = URLRequest(url: url); request.httpMethod = method; request.setValue("Bearer " + Keychain.read("server-token"), forHTTPHeaderField: "Authorization")
         if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body); request.setValue("application/json", forHTTPHeaderField: "Content-Type") }

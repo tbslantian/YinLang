@@ -91,7 +91,7 @@ final class PlaybackTests: XCTestCase {
         let server = try PlaybackServer(); try await server.start(); defer { server.stop() }
         let store = AppStore(), player = Player(), defaults = UserDefaults.standard
         let oldPlugins = store.plugins
-        let keys = ["nav-url", "nav-user", "nav-bitrate", "nav-format", "quality", "music-cache"]
+        let keys = ["nav-url", "nav-user", "nav-bitrate", "nav-bitrate-wifi", "nav-bitrate-mobile", "nav-format", "quality", "music-cache"]
         let previous = Dictionary(uniqueKeysWithValues: keys.map { ($0, defaults.object(forKey: $0)) })
         let recent = try? Data(contentsOf: Disk.support.appendingPathComponent("recent-music.json"))
         let effects = AudioEffects.shared.config
@@ -112,7 +112,7 @@ final class PlaybackTests: XCTestCase {
         store.plugins = []; player.attach(store)
         let item: MediaItem
         if library {
-            defaults.set("0", forKey: "nav-bitrate")
+            defaults.set("0", forKey: "nav-bitrate"); defaults.set("0", forKey: "nav-bitrate-wifi"); defaults.set("0", forKey: "nav-bitrate-mobile")
             // Unsigned simulator hosts cannot reliably write Keychain credentials.
             // Configure the fixture account directly, then use the production
             // Navidrome ping, account identity and stream resolution paths.
