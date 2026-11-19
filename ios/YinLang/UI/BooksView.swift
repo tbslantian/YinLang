@@ -9,13 +9,13 @@ struct BooksView: View {
             NavigationLink { BookBrowseView(search: true) } label: { SearchEntry(title: "搜索有声书") }.buttonStyle(.plain)
             GeometryReader { proxy in
                 HStack(spacing: 10) {
-                    NavigationLink { BookBrowseView(search: false) } label: { DiscoveryHero(books: true) }.frame(width: (proxy.size.width - 10) * 1.3 / 2.3)
+                    NavigationLink { BookBrowseView(search: false) } label: { DiscoveryHero(books: true) }.frame(width: (proxy.size.width - 10) * 1.3 / 2.3, height: proxy.size.height).accessibilityIdentifier("books-discovery")
                     VStack(spacing: 8) {
-                        NavigationLink { SavedView(title: "书架", type: "bookshelf") } label: { LibraryShortcut(title: "书架", icon: "books.vertical") }
-                        NavigationLink { PluginSettingsView(books: true) } label: { LibraryShortcut(title: "插件", icon: "puzzlepiece.extension") }
-                        NavigationLink { BookSettingsView() } label: { LibraryShortcut(title: "听书设置", icon: "gearshape") }
+                        NavigationLink { SavedView(title: "书架", type: "bookshelf") } label: { LibraryShortcut(title: "书架", icon: "books.vertical") }.accessibilityIdentifier("books-shelf-shortcut")
+                        NavigationLink { PluginSettingsView(books: true) } label: { LibraryShortcut(title: "插件", icon: "puzzlepiece.extension") }.accessibilityIdentifier("books-plugins-shortcut")
+                        NavigationLink { BookSettingsView() } label: { LibraryShortcut(title: "听书设置", icon: "gearshape") }.accessibilityIdentifier("books-settings-shortcut")
                     }
-                }
+                }.frame(width: proxy.size.width, height: proxy.size.height)
             }.frame(height: 184).buttonStyle(.plain)
             if let current = store.nowBook { SectionTitle(title: "继续收听"); SongRow(item: current) { player.resumeBook(current) } }
             SectionTitle(title: "我的收藏")

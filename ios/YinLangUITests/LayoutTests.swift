@@ -35,6 +35,7 @@ final class LayoutTests: XCTestCase {
             if screen != "player" && screen != "lyrics" { XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "page-title-")).firstMatch.waitForExistence(timeout: 8), screen) }
             else { XCTAssertTrue(app.buttons["播放器菜单"].firstMatch.waitForExistence(timeout: 8)) }
             XCTAssertEqual(app.navigationBars.count, 0, screen)
+            if screen == "books" { assertBooksDiscoveryLayout(app) }
             capture("android-" + screen)
             if screen == "personalization" {
                 app.buttons["首页模板"].firstMatch.tap()
@@ -61,7 +62,27 @@ final class LayoutTests: XCTestCase {
             XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
             if screen == "player" { XCTAssertTrue(app.buttons["播放器菜单"].firstMatch.waitForExistence(timeout: 8)) }
             else { XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "page-title-")).firstMatch.waitForExistence(timeout: 8)) }
-            XCTAssertEqual(app.navigationBars.count, 0); capture("wide-" + screen); app.terminate()
+            XCTAssertEqual(app.navigationBars.count, 0)
+            if screen == "books" { assertBooksDiscoveryLayout(app) }
+            capture("wide-" + screen); app.terminate()
+        }
+    }
+    @MainActor private func assertBooksDiscoveryLayout(_ app: XCUIApplication) {
+        let hero = app.buttons["books-discovery"].firstMatch
+        XCTAssertTrue(hero.waitForExistence(timeout: 5))
+        XCTAssertEqual(hero.frame.height, 184, accuracy: 1)
+        let favorites = app.staticTexts["我的收藏"].firstMatch
+        XCTAssertTrue(favorites.exists)
+        XCTAssertLessThanOrEqual(hero.frame.maxY, favorites.frame.minY)
+        var previousBottom = hero.frame.minY
+        for identifier in ["books-shelf-shortcut", "books-plugins-shortcut", "books-settings-shortcut"] {
+            let shortcut = app.buttons[identifier].firstMatch
+            XCTAssertTrue(shortcut.exists, identifier)
+            XCTAssertEqual(shortcut.frame.height, 56, accuracy: 1, identifier)
+            XCTAssertGreaterThanOrEqual(shortcut.frame.minY, previousBottom - 1, identifier)
+            XCTAssertLessThanOrEqual(shortcut.frame.maxY, hero.frame.maxY + 1, identifier)
+            XCTAssertGreaterThanOrEqual(shortcut.frame.minX, hero.frame.maxX, identifier)
+            previousBottom = shortcut.frame.maxY
         }
     }
     @MainActor private func capture(_ name: String) { let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment) }
