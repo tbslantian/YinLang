@@ -64,6 +64,14 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang -configuration Debug -destination "platform=iOS Simulator,id=$TABLET_ID" -derivedDataPath ios/build/DerivedData -resultBundlePath ios/build/iPad.xcresult -only-testing:YinLangUITests CODE_SIGNING_ALLOWED=NO test | tee ios-ipad-test.log
+      - name: Export layout screenshots
+        if: always()
+        run: |
+          for device in iPhone iPad; do
+            if [ -d "ios/build/$device.xcresult" ]; then
+              xcrun xcresulttool export attachments --path "ios/build/$device.xcresult" --output-path "ios/build/screenshots/$device" || true
+            fi
+          done
       - name: Upload unsigned IPA, archive and test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -75,4 +83,5 @@ jobs:
             ios/build/SHA256SUMS.txt
             ios/build/*.xcarchive
             ios/build/*.xcresult
+            ios/build/screenshots/
             ios-*.log

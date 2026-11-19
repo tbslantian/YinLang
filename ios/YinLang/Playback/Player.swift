@@ -127,7 +127,8 @@ final class Player: ObservableObject {
                 }
                 if !url.isFileURL {
                     let limit = UserDefaults.standard.object(forKey: current.kind == "episode" ? "book-cache" : "music-cache") as? Int ?? 512
-                    let cached = await MediaCache.shared.store(store.cacheKey(current), url: url, headers: headers, books: current.kind == "episode", limitMB: limit)
+                    let actualQuality = current.kind == "song" && current.source != "library" ? source.components(separatedBy: " · ").last : nil
+                    let cached = await MediaCache.shared.store(store.cacheKey(current, quality: actualQuality), url: url, headers: headers, books: current.kind == "episode", limitMB: limit)
                     if generation == token, cached != nil { status = source + " · 已可离线播放" }
                 }
             } catch {

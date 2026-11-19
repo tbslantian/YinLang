@@ -62,7 +62,8 @@ final class AudioRelay: @unchecked Sendable {
                 var start = 0, end = max(0, size - 1)
                 if let range, range.hasPrefix("bytes=") { let numbers = range.dropFirst(6).split(separator: "-", omittingEmptySubsequences: false); if numbers.count == 2 { if numbers[0].isEmpty, let suffix = Int(numbers[1]) { start = max(0, size - suffix) } else { start = Int(numbers[0]) ?? 0; end = min(end, Int(numbers[1]) ?? end) } } }
                 guard start >= 0, start <= end, end < size else { connection.cancel(); return }
-                let mime = ["flac":"audio/flac", "m4a":"audio/mp4", "wav":"audio/wav", "ogg":"audio/ogg"][source.pathExtension] ?? "audio/mpeg"
+                let signatureFile = try FileHandle(forReadingFrom: source); let signature = try signatureFile.read(upToCount: 16) ?? Data(); try signatureFile.close()
+                let mime = signature.starts(with: Data("fLaC".utf8)) ? "audio/flac" : signature.starts(with: Data("RIFF".utf8)) ? "audio/wav" : signature.starts(with: Data("OggS".utf8)) ? "audio/ogg" : signature.count >= 8 && String(decoding: signature[4..<8], as: UTF8.self) == "ftyp" ? "audio/mp4" : "audio/mpeg"
                 let extra = range == nil ? "" : "Content-Range: bytes \(start)-\(end)/\(size)\r\n"
                 let header = "HTTP/1.1 \(range == nil ? "200 OK" : "206 Partial Content")\r\nContent-Type: \(mime)\r\nContent-Length: \(end - start + 1)\r\nAccept-Ranges: bytes\r\n\(extra)Connection: close\r\n\r\n"
                 let file = try FileHandle(forReadingFrom: source); try file.seek(toOffset: UInt64(start))

@@ -3,6 +3,7 @@ import SwiftUI
 struct CastView: View {
     @EnvironmentObject var player: Player
     @StateObject private var dlna: DLNA
+    @State private var address = ""
     init(player: Player) { _dlna = StateObject(wrappedValue: player.dlna) }
     var body: some View {
         NavigationStack {
@@ -10,6 +11,8 @@ struct CastView: View {
                 Section("AirPlay") { HStack { Label("选择系统音频设备", systemImage: "airplayaudio"); Spacer(); AirPlayPicker(dark: false).frame(width: 44, height: 44) } }
                 Section("DLNA 音频设备") {
                     Button("搜索局域网设备") { Task { await dlna.search() } }.disabled(dlna.searching)
+                    TextField("设备描述地址，例如 http://192.168.1.10:端口/description.xml", text: $address).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    Button("手动连接") { Task { await dlna.addDescription(address) } }.disabled(address.isEmpty)
                     if dlna.searching { ProgressView() }
                     if !dlna.error.isEmpty { Text(dlna.error).font(.caption).foregroundStyle(.secondary) }
                     ForEach(dlna.devices) { device in Button { Task { await player.cast(to: device) } } label: { HStack { Label(device.name, systemImage: "hifispeaker"); Spacer(); if dlna.current == device { Image(systemName: "checkmark") } } } }

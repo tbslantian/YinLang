@@ -10,6 +10,8 @@ final class ScriptRuntime: NSObject, WKUIDelegate, WKNavigationDelegate, WKScrip
     private var nextID = 0
     private var scripts = ""
     private let scope: String
+    private var actualAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile"
+    private let noRedirect = URLSession(configuration: .default, delegate: RedirectPolicy(), delegateQueue: nil)
     private var networkTasks: [URLSessionDataTask] = []
     private var probes: [WebProbe] = []
     var update: ((String, String) -> Void)?
@@ -63,8 +65,11 @@ final class ScriptRuntime: NSObject, WKUIDelegate, WKNavigationDelegate, WKScrip
           return prompt('__yinlang_native__', JSON.stringify({method,args}));
         }});
         """
-        webView.evaluateJavaScript(bridge + "\n" + host + "\nSoundShelfRuntime.initialize(" + quote(scripts) + ");") { [weak self] _, error in
-            if let error { self?.ready?.resume(throwing: error); self?.ready = nil }
+        webView.evaluateJavaScript("navigator.userAgent") { [weak self] value, _ in
+            guard let self else { return }; self.actualAgent = value as? String ?? self.actualAgent
+            webView.evaluateJavaScript(bridge + "\n" + host + "\nSoundShelfRuntime.initialize(" + quote(self.scripts) + ");") { [weak self] _, error in
+                if let error { self?.ready?.resume(throwing: error); self?.ready = nil }
+            }
         }
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { close() }
@@ -121,7 +126,7 @@ final class ScriptRuntime: NSObject, WKUIDelegate, WKNavigationDelegate, WKScrip
             case "put", "writeCache": defaults.set(str(1), forKey: scope + ":" + str(0)); defaults.set(Date().timeIntervalSince1970, forKey: scope + ":age:" + str(0))
             case "cacheAge": result = String((Date().timeIntervalSince1970 - defaults.double(forKey: scope + ":age:" + str(0))) * 1000)
             case "uuid": result = UUID().uuidString
-            case "agent": result = bool(0) ? "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15" : "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile Safari/604.1"
+            case "agent": result = bool(0) ? "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15" : actualAgent
             case "digest": result = NativeCrypto.digest(str(0), str(1))
             case "decode64": result = Data(base64Encoded: str(0)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
             case "encode64": result = Data(str(0).utf8).base64EncodedString()
@@ -155,8 +160,19 @@ final class ScriptRuntime: NSObject, WKUIDelegate, WKNavigationDelegate, WKScrip
         let options = raw.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? JSONObject } ?? [:]
         var request = URLRequest(url: url); request.httpMethod = options.string("method").isEmpty ? "GET" : options.string("method")
         request.allHTTPHeaderFields = options["headers"] as? [String: String]
+        if request.value(forHTTPHeaderField: "User-Agent") == nil { request.setValue(actualAgent, forHTTPHeaderField: "User-Agent") }
+        if options["statusOnly"] as? Bool == true { request.httpMethod = "HEAD" }
         request.httpBody = (options["body"] as? String)?.data(using: .utf8); request.timeoutInterval = 30
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+        let transport = options["follow"] as? Bool == false ? noRedirect : URLSession.shared
+        web.configuration.websiteDataStore.httpCookieStore.getAllCookies { [weak self] cookies in
+        guard let self else { completion(jsonText(["error":"插件运行环境已关闭"])); return }
+        var request = request
+        if request.value(forHTTPHeaderField: "Cookie") == nil {
+            let host = url.host ?? ""
+            let matching = cookies.filter { cookie in let domain = cookie.domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")); return (host == domain || host.hasSuffix("." + domain)) && url.path.hasPrefix(cookie.path) && (!cookie.isSecure || url.scheme == "https") && (cookie.expiresDate == nil || cookie.expiresDate! > Date()) }
+            if !matching.isEmpty { request.setValue(HTTPCookie.requestHeaderFields(with: matching)["Cookie"], forHTTPHeaderField: "Cookie") }
+        }
+        let task = transport.dataTask(with: request) { data, response, error in
             let result: JSONObject
             if let error { result = ["error": error.localizedDescription] }
             else if let response = response as? HTTPURLResponse {
@@ -170,8 +186,13 @@ final class ScriptRuntime: NSObject, WKUIDelegate, WKNavigationDelegate, WKScrip
             } else { result = ["error": "网络未返回响应"] }
             DispatchQueue.main.async { completion(jsonText(result)) }
         }
-        networkTasks.removeAll { $0.state == .completed }; networkTasks.append(task); task.resume()
+        self.networkTasks.removeAll { $0.state == .completed }; self.networkTasks.append(task); task.resume()
+        }
     }
+}
+
+private final class RedirectPolicy: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
 }
 
 private final class WeakScriptHandler: NSObject, WKScriptMessageHandler {

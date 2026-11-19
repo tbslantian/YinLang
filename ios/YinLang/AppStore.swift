@@ -13,6 +13,7 @@ final class AppStore: ObservableObject {
     @Published var activity = ""
     @Published var connectionRevision = 0
     @Published var downloading: Set<String> = []
+    @Published private var serverStars: [String: Bool] = Disk.read("server-stars.json", fallback: [:])
     @Published var nowBook: MediaItem? = Disk.read("last-book.json", fallback: Optional<MediaItem>.none)
     private var runtimes: [String: ScriptRuntime] = [:]
     private var starts: [String: Task<ScriptRuntime, Error>] = [:]
@@ -33,7 +34,16 @@ final class AppStore: ObservableObject {
         if item.source == "library" && item.raw.string("_account") != nav?.identity { return nil }
         return URL(string: item.source == "library" ? nav?.cover(item.cover) ?? "" : item.cover.replacingOccurrences(of: "{size}", with: "400"))
     }
+    func isLiked(_ item: MediaItem) -> Bool {
+        if item.source == "library" { return serverStars[item.id] ?? !(item.raw.string("starred").isEmpty) }
+        return liked.contains { $0.id == item.id }
+    }
     func toggleLike(_ item: MediaItem) {
+        if item.source == "library", let nav {
+            guard item.raw.string("_account") == nav.identity else { message = "音乐库账号已变更"; return }
+            let enabled = !isLiked(item)
+            Task { do { _ = try await nav.get(enabled ? "star" : "unstar", [.init(name: "id", value: item.key)]); serverStars[item.id] = enabled; Disk.save(serverStars, "server-stars.json") } catch { message = error.localizedDescription } }; return
+        }
         if let index = liked.firstIndex(where: { $0.id == item.id }) { liked.remove(at: index) } else { liked.insert(item, at: 0) }
     }
     func toggleShelf(_ item: MediaItem) {
@@ -132,13 +142,18 @@ final class AppStore: ObservableObject {
         let runtime = try await runtime(plugin.id, scripts: plugin.script)
         return try await runtime.call("bookCall(\(quote(source)),\(quote(action)),\(jsonText(args)))")
     }
-    func cacheKey(_ item: MediaItem) -> String {
-        item.id + (item.source == "library" ? ":\(nav?.identity ?? ""):\(defaults.string(forKey: "nav-bitrate") ?? "0"):\(defaults.string(forKey: "nav-format") ?? "mp3")" : ":\(defaults.string(forKey: "quality") ?? "320k")")
+    func cacheKey(_ item: MediaItem, quality: String? = nil) -> String {
+        item.id + (item.source == "library" ? ":\(nav?.identity ?? ""):\(defaults.string(forKey: "nav-bitrate") ?? "0"):\(defaults.string(forKey: "nav-format") ?? "mp3")" : item.kind == "episode" ? "" : ":\(quality ?? defaults.string(forKey: "quality") ?? "320k")")
     }
     func resolve(_ item: MediaItem, fallback: Bool = true) async throws -> (URL, [String: String], String) {
         if item.source == "library", item.raw.string("_account") != nav?.identity { throw AppFailure.message("音乐库账号已变更，请从当前音乐库选择歌曲") }
         if let download = downloads.first(where: { $0.item.id == item.id }), FileManager.default.fileExists(atPath: Disk.documents.appendingPathComponent(download.filename).path) { return (Disk.documents.appendingPathComponent(download.filename), [:], "本机下载") }
         if let cached = await MediaCache.shared.cached(cacheKey(item), books: item.kind == "episode") { return (cached, [:], "离线缓存") }
+        if fallback && item.kind == "song" && item.source != "library" {
+            for quality in ["master", "atmos_plus", "atmos", "hires", "flac24bit", "flac", "320k", "192k", "128k"] {
+                if let cached = await MediaCache.shared.cached(cacheKey(item, quality: quality), books: false) { return (cached, [:], "离线缓存 · " + quality) }
+            }
+        }
         if item.source == "library" {
             guard let nav else { throw AppFailure.message("请先连接音乐库") }; return (try nav.stream(item), [:], "Navidrome")
         }
@@ -229,7 +244,7 @@ final class AppStore: ObservableObject {
         do {
             let (url, headers, quality) = try await resolve(item, fallback: false)
             guard !url.isFileURL else { throw AppFailure.message("当前文件只有本机地址，请从在线列表选择歌曲") }
-            _ = try await server("/v1/jobs", method: "POST", body: ["kind": "music", "url": url.absoluteString, "headers": headers, "title": item.title, "artist": item.subtitle, "quality": quality])
+            _ = try await server("/v1/jobs", method: "POST", body: ["kind": "music", "url": url.absoluteString, "headers": headers, "title": item.title, "artist": item.subtitle, "quality": defaults.string(forKey: "quality") ?? "320k", "album": item.raw.string("albumName", "album")])
             message = "已推送到服务器"
         } catch { message = error.localizedDescription }
     }

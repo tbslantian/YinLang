@@ -15,6 +15,7 @@ struct MiniPlayer: View {
                 Button { player.showPlayer = true } label: { VStack(alignment: .leading, spacing: 4) { Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1); Text(player.loading ? "正在解析…" : item.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }.buttonStyle(.plain)
                 Button { player.showQueue = true } label: { Image(systemName: "list.bullet").font(.title3).frame(width: 38, height: 44) }.accessibilityLabel("播放队列")
             }.padding(.horizontal, 16).padding(.vertical, 10).background(.ultraThinMaterial).overlay(alignment: .top) { GeometryReader { proxy in Rectangle().fill(Palette.accent).frame(width: proxy.size.width * min(1, player.duration > 0 ? player.elapsed / player.duration : 0), height: 2) }.frame(height: 2) }
+                .task(id: item.id) { showToggle = true; try? await Task.sleep(nanoseconds: 2_000_000_000); if !Task.isCancelled { showToggle = false } }
         }
     }
 }
@@ -86,7 +87,7 @@ struct PlayerView: View {
     private var activeLine: LyricLine? { player.lyrics.last { $0.time <= player.elapsed } }
     private var metadata: some View {
         HStack(spacing: 15) { VStack(alignment: .leading, spacing: 8) { Text(player.current?.title ?? "音浪").font(.title2.bold()).lineLimit(2); Text(player.current?.subtitle ?? "").font(.subheadline).opacity(0.6).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading)
-            Button { if let current = player.current { store.toggleLike(current) } } label: { Image(systemName: store.liked.contains(where: { $0.id == player.current?.id }) ? "heart.fill" : "heart").font(.title2) }.accessibilityLabel("喜欢")
+            Button { if let current = player.current { store.toggleLike(current) } } label: { Image(systemName: (player.current.map { store.isLiked($0) } ?? false) ? "heart.fill" : "heart").font(.title2) }.accessibilityLabel("喜欢")
         }.padding(.bottom, 20)
     }
     private var controls: some View {
@@ -117,7 +118,7 @@ struct PlayerView: View {
     private var playerMenu: some View {
         Menu {
             if let current = player.current {
-                Button(store.liked.contains(where: { $0.id == current.id }) ? "取消喜欢" : "喜欢", systemImage: "heart") { store.toggleLike(current) }
+                Button(store.isLiked(current) ? "取消喜欢" : "喜欢", systemImage: "heart") { store.toggleLike(current) }
                 if current.kind == "song" { Button("下载到本机", systemImage: "arrow.down.circle") { Task { await store.download(current) } } }
             }
             Toggle("旋转黑胶", isOn: $vinyl)
@@ -152,6 +153,8 @@ struct EffectsView: View {
                     ForEach(0..<10, id: \.self) { band in HStack { Text(AudioEffects.frequencies[band]).font(.caption.monospacedDigit()).frame(width: 33); Slider(value: Binding(get: { Double(effects.config.gains[band]) }, set: { effects.config.gains[band] = Float($0) }), in: -12...12, step: 0.5); Text(String(format: "%+.1f", effects.config.gains[band])).font(.caption.monospacedDigit()).frame(width: 40) } }
                 }
                 Section("环境与音高") {
+                    Picker("环境混响", selection: $effects.config.room) { ForEach(["关闭", "小房间", "室内", "影院", "大厅", "教堂", "板式"], id: \.self) { Text($0).tag($0) } }
+                    Text("干声：\(Int(effects.config.dry * 100))%"); Slider(value: $effects.config.dry, in: 0...1)
                     Text("混响干湿：\(Int(effects.config.wet * 100))% "); Slider(value: $effects.config.wet, in: 0...1)
                     Text("独立升降调：\(Int(effects.config.pitch)) 半音"); Slider(value: $effects.config.pitch, in: -12...12, step: 1)
                     Text("耳机立体声环绕：\(Int(effects.config.surround * 100))%"); Slider(value: $effects.config.surround, in: 0...1)

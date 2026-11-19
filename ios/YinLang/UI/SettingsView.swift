@@ -162,13 +162,15 @@ struct PluginEditor: View {
 struct BookSourceSettings: View {
     @EnvironmentObject var store: AppStore
     var source: JSONObject
-    @State private var values: [String: String] = [:]
+    @State private var values: JSONObject = [:]
     var body: some View {
         Form {
             if let url = URL(string: source.string("loginUrl")), ["https", "http"].contains(url.scheme ?? "") { NavigationLink("在应用内登录") { LoginWebView(url: url).navigationTitle(source.string("name")).navigationBarTitleDisplayMode(.inline) } }
             ForEach(Array(source.rows("config").enumerated()), id: \.offset) { _, row in
                 let key = row.string("key", "id")
-                TextField(row.string("label", "title", "name"), text: Binding(get: { values[key] ?? row.string("default") }, set: { values[key] = $0 }))
+                if row.string("type") == "boolean" || row.string("type") == "switch" || row["default"] is Bool {
+                    Toggle(row.string("label", "title", "name"), isOn: Binding(get: { values[key] as? Bool ?? row["default"] as? Bool ?? false }, set: { values[key] = $0 }))
+                } else { TextField(row.string("label", "title", "name"), text: Binding(get: { values[key] as? String ?? row.string("default") }, set: { values[key] = $0 })) }
             }
             Button("保存源设置") { Task { do { _ = try await store.bookCall(source.string("id"), pluginID: source.string("_plugin"), action: "setPrefs", args: [values]); store.message = "已保存" } catch { store.message = error.localizedDescription } } }
         }.navigationTitle(source.string("name"))

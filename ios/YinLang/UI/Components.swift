@@ -34,7 +34,7 @@ struct SongRow: View {
             }.buttonStyle(.plain)
             Menu {
                 Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") { player.insertNext(item) }
-                Button(store.liked.contains(where: { $0.id == item.id }) ? "取消喜欢" : "喜欢", systemImage: "heart") { store.toggleLike(item) }
+                Button(store.isLiked(item) ? "取消喜欢" : "喜欢", systemImage: "heart") { store.toggleLike(item) }
                 if item.kind == "song" {
                     Button("下载到本机", systemImage: "arrow.down.circle") { Task { await store.download(item) } }
                     if item.source != "library" { Button("推送到服务器", systemImage: "server.rack") { Task { await store.push(item) } } }

@@ -54,7 +54,7 @@ actor MediaCache {
                 var request = URLRequest(url: url); request.allHTTPHeaderFields = headers; request.timeoutInterval = 90
                 let (temp, response) = try await URLSession.shared.download(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-                      !((http.mimeType ?? "").contains("text") || (http.mimeType ?? "").contains("json")) else { return nil }
+                      !((http.mimeType ?? "").contains("text") || (http.mimeType ?? "").contains("json") || (http.mimeType ?? "").contains("mpegurl")) else { return nil }
                 let size = (try temp.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
                 guard size > 0, size <= limitMB * 1_048_576 else { try? FileManager.default.removeItem(at: temp); return nil }
                 try FileManager.default.moveItem(at: temp, to: destination); return destination

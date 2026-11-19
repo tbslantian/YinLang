@@ -50,6 +50,13 @@ final class DLNA: ObservableObject {
     func search() async {
         guard !searching else { return }; searching = true; error = ""; defer { searching = false }
         let locations = await Task.detached { Self.discoverLocations() }.value
+        await load(Array(locations))
+    }
+    func addDescription(_ address: String) async {
+        guard let url = URL(string: address), ["http", "https"].contains(url.scheme ?? "") else { error = "请输入 DLNA 设备描述 XML 的 HTTP 地址"; return }
+        await load([address], append: true)
+    }
+    private func load(_ locations: [String], append: Bool = false) async {
         var found: [DLNADevice] = []
         for location in locations {
             guard let url = URL(string: location), let (data, _) = try? await URLSession.shared.data(from: url) else { continue }
@@ -58,7 +65,9 @@ final class DLNA: ObservableObject {
             let rendering = document.services.first { $0.0.contains(":RenderingControl:") }.flatMap { URL(string: $0.1, relativeTo: url)?.absoluteURL }
             found.append(.init(id: location, name: document.friendlyName.isEmpty ? url.host ?? "DLNA" : document.friendlyName, transport: control, rendering: rendering))
         }
-        devices = found.sorted { $0.name < $1.name }; if devices.isEmpty { error = "未找到 DLNA 设备，请确认手机与设备处于同一局域网并允许本地网络访问。" }
+        if append { let ids = Set(devices.map(\.id)); devices += found.filter { !ids.contains($0.id) } } else { devices = found }
+        devices.sort { $0.name < $1.name }
+        if found.isEmpty { error = "未找到 DLNA 设备。可填写设备描述地址手动连接。自动发现还需要签名包含 Apple 多播网络权限。" } else { error = "" }
     }
     func soap(_ device: DLNADevice, action: String, values: [(String, String)] = [], rendering: Bool = false) async throws -> String {
         let service = "urn:schemas-upnp-org:service:\(rendering ? "RenderingControl" : "AVTransport"):1"
@@ -72,6 +81,7 @@ final class DLNA: ObservableObject {
         return String(decoding: data, as: UTF8.self)
     }
     func cast(_ item: MediaItem, resolved: URL, headers: [String: String], to device: DLNADevice) async throws {
+        guard !resolved.pathExtension.lowercased().contains("m3u8") else { throw AppFailure.message("DLNA 暂不转发 HLS，请使用 AirPlay") }
         relay?.stop(); let relay = AudioRelay(); let url = try await relay.start(source: resolved, headers: headers); self.relay = relay
         let metadata = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"0\" parentID=\"0\" restricted=\"1\"><dc:title>\(Self.escape(item.title))</dc:title><upnp:artist>\(Self.escape(item.subtitle))</upnp:artist><upnp:class>object.item.audioItem.musicTrack</upnp:class></item></DIDL-Lite>"
         _ = try await soap(device, action: "SetAVTransportURI", values: [("CurrentURI", url.absoluteString), ("CurrentURIMetaData", metadata)])
