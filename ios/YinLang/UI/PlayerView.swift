@@ -48,6 +48,11 @@ struct PlayerView: View {
     @State private var cast = false
     @State private var chooseMode = false
     @State private var chooseSpeed = false
+    init() {
+#if DEBUG
+        _lyrics = State(initialValue: UITestFixtures.active && UITestFixtures.screen == "lyrics")
+#endif
+    }
     private var ink: Color { Color(rgb: dark ? 0xfffbff : 0x291e24) }
     private var muted: Color { Color(rgb: dark ? 0xece4ef : 0x624f55) }
     private var accent: Color { Color(rgb: dark ? 0xffcedd : 0x9a3e54) }
@@ -153,7 +158,7 @@ struct PlayerChoice: View {
     var rows: [String]
     var selected: String
     var choose: (String) -> Void
-    var body: some View { NavigationStack { AndroidList { ForEach(rows, id: \.self) { value in Button { choose(value); dismiss() } label: { HStack { Text(value).font(.system(size: 15, weight: .semibold)); Spacer(); if value == selected { YLIcon(systemName: "checkmark", size: 18) } }.foregroundStyle(value == selected ? Palette.accent : Palette.ink).padding(16).androidSurface() } } }.androidPage(title) }.presentationDetents([.medium, .large]).presentationCornerRadius(30).presentationDragIndicator(.visible) }
+    var body: some View { NavigationStack { AndroidList { ForEach(rows, id: \.self) { value in Button { choose(value); dismiss() } label: { HStack(spacing: 0) { Text(value == selected ? "✓" : "").font(.system(size: 23, weight: .bold)).foregroundStyle(Palette.accent).frame(width: 40); Text(value).font(.system(size: 18)).foregroundStyle(Palette.ink); Spacer() }.padding(.horizontal, 10).padding(.vertical, 18).contentShape(Rectangle()) } } }.androidPage(title, category: "") }.presentationDetents([.medium, .large]).presentationCornerRadius(30).presentationDragIndicator(.visible) }
 }
 struct PlayerMenuView: View {
     @EnvironmentObject var store: AppStore
@@ -176,7 +181,7 @@ struct AirPlayPicker: UIViewRepresentable {
 }
 
 struct SystemVolume: UIViewRepresentable {
-    func makeUIView(context: Context) -> MPVolumeView { MPVolumeView(frame: .zero) }
+    func makeUIView(context: Context) -> MPVolumeView { let view = MPVolumeView(frame: .zero); view.showsRouteButton = false; return view }
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
 

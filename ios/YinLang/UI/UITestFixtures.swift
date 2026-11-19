@@ -45,7 +45,7 @@ enum UITestFixtures {
     }
     static func bookCall(_ action: String) -> Any {
         switch action {
-        case "categoryMenus": return [["name":"热门推荐","url":"category-hot"],["name":"文学名著","url":"category-books"],["name":"广播","url":"radio"]]
+        case "categoryMenus": return [["title":"听书","tabs":[["title":"热门推荐","url":"category-hot"],["title":"文学名著","url":"category-books"]]],["title":"广播","tabs":[["title":"广播电台","url":"radio"]]]]
         case "categoryPage", "search": return ["books":books,"totalPage":1]
         case "bookDetail": return ["name":"三体","description":"在声音里，遇见另一个世界。继续上次的故事，或从第一章开始聆听。","episodes":(1...12).map { ["url":"chapter-\($0)","name":"第\($0)章 · 故事开始"] }]
         default: return [:] as JSONObject

@@ -69,5 +69,9 @@ actor MediaCache {
         var size = entries.reduce(0) { $0 + $1.1 }
         for entry in entries where size > limitMB * 1_048_576 { try? FileManager.default.removeItem(at: entry.0); size -= entry.1 }
     }
+    func size(books: Bool) -> Int64 {
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder(books), includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        return files.reduce(Int64(0)) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+    }
     func clear(books: Bool) { let url = folder(books); try? FileManager.default.removeItem(at: url) }
 }

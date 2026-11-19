@@ -32,6 +32,7 @@ struct BookBrowseView: View {
     @State private var sourceID = ""
     @State private var menus: [JSONObject] = []
     @State private var category = ""
+    @State private var menuIndex = "0"
     @State private var nextPage = ""
     @State private var seenPages: Set<String> = []
     @State private var query = ""
@@ -43,6 +44,7 @@ struct BookBrowseView: View {
     @State private var more = false
     @State private var generation = UUID()
     private var source: JSONObject { sources.first { $0.string("id") == sourceID } ?? [:] }
+    private var tabs: [JSONObject] { guard let index = Int(menuIndex), menus.indices.contains(index) else { return [] }; return menus[index].rows("tabs") }
     var body: some View {
         AndroidForm {
             if search { AndroidSearch(text: $query, hint: "书名或作者") { Task { await reload() } } }
@@ -51,7 +53,12 @@ struct BookBrowseView: View {
                 Spacer()
                 Button { grid.toggle() } label: { YLIcon(systemName: grid ? "list.bullet" : "square.grid.2x2").frame(width: 44, height: 44) }.buttonStyle(.plain).accessibilityLabel("切换网格列表")
             }
-            if !search && !menus.isEmpty { AndroidChips(names: menus.map { ($0.string("url"), $0.string("title", "name")) }, selection: $category).onChange(of: category) { _, _ in Task { await reload() } } }
+            if !search && !menus.isEmpty {
+                if menus.contains(where: { !$0.rows("tabs").isEmpty }) {
+                    AndroidChips(names: menus.enumerated().map { (String($0.offset), $0.element.string("title", "name")) }, selection: $menuIndex).onChange(of: menuIndex) { _, _ in category = tabs.first?.string("url") ?? "" }
+                    AndroidChips(names: tabs.map { ($0.string("url"), $0.string("title", "name")) }, selection: $category).onChange(of: category) { _, _ in Task { await reload() } }
+                } else { AndroidChips(names: menus.map { ($0.string("url"), $0.string("title", "name")) }, selection: $category).onChange(of: category) { _, _ in Task { await reload() } } }
+            }
             if !error.isEmpty { ErrorPanel(text: error) { Task { await reload() } } }
             if grid { BookGrid(rows: rows) }
             else { LazyVStack(spacing: 9) { ForEach(rows) { book in NavigationLink { BookDetailView(book: book) } label: { MediaRow(item: book) }.buttonStyle(.plain) } } }
@@ -74,7 +81,9 @@ struct BookBrowseView: View {
                     let nested = ["menus", "tabs", "children", "items", "list"].compactMap { row[$0] }.flatMap(flatten)
                     return !row.string("url").isEmpty ? [row] + nested : nested
                 }
-                menus = flatten(result); category = menus.first?.string("url") ?? ""
+                let original = result as? [JSONObject] ?? []
+                menus = original.contains(where: { !$0.rows("tabs").isEmpty }) ? original : flatten(result)
+                menuIndex = "0"; category = tabs.first?.string("url") ?? menus.first?.string("url") ?? ""
             } catch { self.error = error.localizedDescription }
         }
         await reload()

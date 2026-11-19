@@ -34,10 +34,12 @@ extension Color { init(rgb: UInt32) { self.init(uiColor: UIColor(rgb: rgb)) } }
 
 struct AndroidBackground: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.androidMaterialSettings) private var material
     @AppStorage("personal-theme") private var theme = "default"
     var body: some View {
         Group {
-            if theme == "transparent" { LinearGradient(colors: (scheme == .dark ? [0x142631, 0x302638, 0x152c28] : [0xe3edf4, 0xf2e5ef, 0xe0eee7]).map { Color(rgb: $0) }, startPoint: .topLeading, endPoint: .bottomTrailing) }
+            if material { Palette.color(0xfaf9ff, 0x14151d) }
+            else if theme == "transparent" { LinearGradient(colors: (scheme == .dark ? [0x142631, 0x302638, 0x152c28] : [0xe3edf4, 0xf2e5ef, 0xe0eee7]).map { Color(rgb: $0) }, startPoint: .topLeading, endPoint: .bottomTrailing) }
             else { Palette.background }
         }.ignoresSafeArea()
     }
@@ -140,7 +142,33 @@ struct AndroidChips: View {
 }
 
 private struct AndroidAppearanceRevision: EnvironmentKey { static let defaultValue = "" }
-extension EnvironmentValues { var androidAppearanceRevision: String { get { self[AndroidAppearanceRevision.self] } set { self[AndroidAppearanceRevision.self] = newValue } } }
+private struct AndroidMaterialSettings: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var androidAppearanceRevision: String { get { self[AndroidAppearanceRevision.self] } set { self[AndroidAppearanceRevision.self] = newValue } }
+    var androidMaterialSettings: Bool { get { self[AndroidMaterialSettings.self] } set { self[AndroidMaterialSettings.self] = newValue } }
+}
+struct AndroidPreferenceGroup<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View { VStack(spacing: 0) { content }.padding(.horizontal, 2).background(Palette.color(0xf1f2f8, 0x20232e), in: RoundedRectangle(cornerRadius: 22)) }
+}
+struct AndroidPreferenceDivider: View {
+    var body: some View { Rectangle().fill(Palette.color(0xdedfe6, 0x3b3e48)).frame(height: 1).padding(.leading, 58) }
+}
+struct AndroidPreferenceRow: View {
+    var icon: String
+    var title: String
+    var detail = ""
+    var value = ""
+    var actionable = true
+    var body: some View {
+        HStack(spacing: 12) {
+            YLIcon(systemName: icon, size: 25).foregroundStyle(Palette.muted).frame(width: 32, height: 32)
+            VStack(alignment: .leading, spacing: 5) { Text(title).font(.system(size: 17)); if !detail.isEmpty { Text(detail).font(.system(size: 13)).foregroundStyle(Palette.muted) } }.frame(maxWidth: .infinity, alignment: .leading)
+            if !value.isEmpty { Text(value).font(.system(size: 14)).foregroundStyle(Palette.muted).multilineTextAlignment(.trailing).frame(maxWidth: 118, alignment: .trailing).lineLimit(2) }
+            if actionable { YLIcon(systemName: "arrow.up.arrow.down", size: 17).foregroundStyle(Palette.muted).frame(width: 18, height: 24) }
+        }.foregroundStyle(Palette.ink).padding(.horizontal, 16).padding(.vertical, 17).frame(minHeight: 68).contentShape(Rectangle())
+    }
+}
 struct DiscoveryHero: View {
     var books = false
     var body: some View {
@@ -186,9 +214,14 @@ struct AndroidChoice: View {
     var title: String
     @Binding var selection: String
     var options: [(String, String)]
+    var icon: String? = nil
+    var detail = ""
     @State private var presented = false
     var body: some View {
-        Button { presented = true } label: { HStack(spacing: 12) { Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink); Spacer(minLength: 8); Text(options.first { $0.0 == selection }?.1 ?? selection).font(.system(size: 13)).foregroundStyle(Palette.muted).lineLimit(2); YLIcon(systemName: "chevron.right", size: 15).foregroundStyle(Palette.muted) }.frame(minHeight: 44).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityLabel(title)
+        Button { presented = true } label: {
+            if let icon { AndroidPreferenceRow(icon: icon, title: title, detail: detail, value: options.first { $0.0 == selection }?.1 ?? selection) }
+            else { HStack(spacing: 12) { Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink); Spacer(minLength: 8); Text(options.first { $0.0 == selection }?.1 ?? selection).font(.system(size: 13)).foregroundStyle(Palette.muted).lineLimit(2); YLIcon(systemName: "chevron.right", size: 15).foregroundStyle(Palette.muted) }.frame(minHeight: 44).contentShape(Rectangle()) }
+        }.buttonStyle(.plain).accessibilityLabel(title)
             .sheet(isPresented: $presented) { PlayerChoice(title: title, rows: options.map { $0.1 }, selected: options.first { $0.0 == selection }?.1 ?? "") { value in if let key = options.first(where: { $0.1 == value })?.0 { selection = key } } }
     }
 }

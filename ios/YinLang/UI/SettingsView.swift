@@ -38,44 +38,101 @@ struct PersonalizationView: View {
     @AppStorage("personal-accent") private var accent = "original"
     @AppStorage("mini-lyrics") private var lyrics = "off"
     @AppStorage("discover-kind") private var discover = "songs"
+    @State private var templatePicker = false
     var body: some View {
         AndroidForm {
-            AndroidSection("首页") {
-                AndroidChoice(title: "首页模板", selection: $template, options: [("classic", "经典影像"), ("gallery", "留白画廊"), ("radio", "声波电台"), ("auto", "自动轮换")])
-                Text("经典影像 / 留白画廊 / 声波电台").font(.system(size: 12)).foregroundStyle(Palette.muted)
-                if template == "auto" { AndroidChoice(title: "轮换频率", selection: $rotation, options: [("daily", "每天"), ("hourly", "每小时")]) }
-                ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 12) { ForEach(["classic", "gallery", "radio"], id: \.self) { value in Button { template = value } label: { HomeEntry(books: false, template: value, width: 260) }.buttonStyle(.plain).accessibilityLabel("选择" + value) } } }
+            SectionTitle(title: "首页")
+            AndroidPreferenceGroup {
+                Button { templatePicker = true } label: { AndroidPreferenceRow(icon: "opticaldisc", title: "首页模板", detail: "经典影像 / 留白画廊 / 声波电台", value: HomeTemplatePicker.names.first { $0.0 == template }?.1 ?? "经典影像") }.buttonStyle(.plain).accessibilityLabel("首页模板")
+                if template == "auto" { AndroidPreferenceDivider(); AndroidChoice(title: "轮换频率", selection: $rotation, options: [("hourly", "每小时"), ("daily", "每天")], icon: "timer", detail: rotation == "hourly" ? "每到整点切换下一套" : "每天零点切换下一套") }
             }
-            AndroidSection("外观") {
-                AndroidChoice(title: "主题", selection: $theme, options: [("default", "默认"), ("transparent", "透明")])
-                AndroidChoice(title: "亮度", selection: $appearance, options: [("system", "跟随系统"), ("light", "浅色"), ("dark", "深色"), ("scheduled", "按时间切换")])
-                AndroidChoice(title: "主题色", selection: $accent, options: [("original", "音浪原色"), ("blue", "深海蓝"), ("green", "溪流绿")])
+            SectionTitle(title: "外观")
+            AndroidPreferenceGroup {
+                AndroidChoice(title: "主题", selection: $theme, options: [("default", "默认"), ("transparent", "透明")], icon: "opticaldisc")
+                AndroidPreferenceDivider()
+                AndroidChoice(title: "亮度", selection: $appearance, options: [("system", "跟随系统"), ("light", "浅色"), ("dark", "深色"), ("scheduled", "按时间切换")], icon: "sun.max")
+                AndroidPreferenceDivider()
+                AndroidChoice(title: "主题色", selection: $accent, options: [("original", "音浪原色"), ("blue", "深海蓝"), ("green", "溪流绿")], icon: "slider.horizontal.3")
                 if appearance == "scheduled" { DatePicker("切换到浅色", selection: time($lightMinute), displayedComponents: .hourAndMinute); DatePicker("切换到深色", selection: time($darkMinute), displayedComponents: .hourAndMinute) }
             }
-            AndroidSection("播放条") { AndroidChoice(title: "显示歌词", selection: $lyrics, options: [("off", "关闭"), ("single", "单行歌词"), ("double", "双行歌词")]) }
-            AndroidSection("发现页") { AndroidChoice(title: "推荐类型", selection: $discover, options: [("songs", "歌曲"), ("albums", "专辑")]) }
-        }.androidPage("个性化")
+            SectionTitle(title: "播放条")
+            AndroidPreferenceGroup { AndroidChoice(title: "显示歌词", selection: $lyrics, options: [("off", "关闭"), ("single", "单行歌词"), ("double", "双行歌词")], icon: "quote.bubble") }
+            SectionTitle(title: "发现页")
+            AndroidPreferenceGroup { AndroidChoice(title: "推荐类型", selection: $discover, options: [("songs", "歌曲"), ("albums", "专辑")], icon: "music.note") }
+        }.androidPage("个性化", category: "").environment(\.androidMaterialSettings, true)
+            .sheet(isPresented: $templatePicker) { HomeTemplatePicker(selection: $template) }
     }
     private func time(_ minute: Binding<Int>) -> Binding<Date> { Binding(get: { Calendar.current.startOfDay(for: Date()).addingTimeInterval(Double(minute.wrappedValue * 60)) }, set: { value in let parts = Calendar.current.dateComponents([.hour, .minute], from: value); minute.wrappedValue = (parts.hour ?? 0) * 60 + (parts.minute ?? 0) }) }
+}
+struct HomeTemplatePicker: View {
+    static let names = [("classic", "经典影像"), ("gallery", "留白画廊"), ("radio", "声波电台"), ("auto", "自动轮换")]
+    private let descriptions = ["沉浸封面 · 温暖质感", "柔和色块 · 轻盈排版", "流动声波 · 鲜明色彩", "三套模板依次切换，可选每小时或每天"]
+    @Binding var selection: String
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack { AndroidForm {
+            Text("选择喜欢的风格，返回首页即可看到。").font(.system(size: 13)).foregroundStyle(Palette.muted)
+            ForEach(Array(Self.names.enumerated()), id: \.offset) { index, option in
+                Button { selection = option.0; dismiss() } label: {
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 7) { Text((selection == option.0 ? "✓  " : "") + option.1).font(.system(size: 17, weight: .bold)); Text(descriptions[index]).font(.system(size: 12)).foregroundStyle(Palette.muted) }.frame(maxWidth: .infinity, alignment: .leading)
+                        if option.0 == "auto" { YLIcon(systemName: "arrow.clockwise", size: 27).frame(width: 40, height: 44) }
+                        else { VStack(spacing: 5) { HomeEntry(books: false, template: option.0, width: 320).scaleEffect(0.3375, anchor: .topLeading).frame(width: 108, height: 38).clipped(); HomeEntry(books: true, template: option.0, width: 320).scaleEffect(0.3375, anchor: .topLeading).frame(width: 108, height: 38).clipped() }.frame(width: 108, height: 82) }
+                    }.foregroundStyle(selection == option.0 ? Palette.accent : Palette.ink).padding(14).background(selection == option.0 ? Palette.tint : Palette.paper, in: RoundedRectangle(cornerRadius: 18))
+                }.buttonStyle(.plain)
+            }
+        }.androidPage("首页模板", category: "") }.presentationDetents([.large]).presentationCornerRadius(30).presentationDragIndicator(.visible)
+    }
 }
 struct CacheSettingsView: View {
     @AppStorage("music-cache") private var music = 512
     @AppStorage("book-cache") private var books = 512
+    @State private var musicBytes: Int64 = 0
+    @State private var bookBytes: Int64 = 0
+    @State private var editing: Bool? = nil
+    @State private var limit = ""
+    @State private var limitError = ""
     var body: some View { AndroidForm {
-        AndroidSection("音乐缓存") { AndroidChoice(title: "缓存上限", selection: Binding(get: { String(music) }, set: { music = Int($0) ?? 512 }), options: [0,128,256,512,1024,2048,4096,8192].map { (String($0), $0 == 0 ? "关闭" : "\($0) MB") }); Button("清除音乐缓存") { Task { await MediaCache.shared.clear(books: false) } } }
-        AndroidSection("有声书缓存") { AndroidChoice(title: "缓存上限", selection: Binding(get: { String(books) }, set: { books = Int($0) ?? 512 }), options: [0,128,256,512,1024,2048,4096,8192].map { (String($0), $0 == 0 ? "关闭" : "\($0) MB") }); Button("清除有声书缓存") { Task { await MediaCache.shared.clear(books: true) } } }
-        Text("设为 0 可关闭缓存，手动下载的文件独立保存。").font(.system(size: 12)).foregroundStyle(Palette.muted)
-    }.androidPage("缓存管理").onChange(of: music) { _, limit in Task { await MediaCache.shared.trim(books: false, limitMB: limit) } }.onChange(of: books) { _, limit in Task { await MediaCache.shared.trim(books: true, limitMB: limit) } } }
+        Text("自动清理最久未使用的缓存。手动保存的离线下载独立存放。").font(.system(size: 14)).foregroundStyle(Palette.muted)
+        cachePanel(false); cachePanel(true)
+    }.androidPage("缓存管理", category: "总设置").task { await measure() }
+        .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
+            NavigationStack { AndroidForm {
+                Text("默认 512 MB，可设为 0–16384 MB。").foregroundStyle(Palette.muted)
+                AndroidField(title: "缓存上限（MB）", text: $limit, hint: "输入 MB，0 为关闭").keyboardType(.numberPad)
+                if !limitError.isEmpty { Text(limitError).foregroundStyle(Palette.accent) }
+                Button("保存") { guard let value = Int(limit), (0...16384).contains(value) else { limitError = "请输入 0–16384"; return }; let book = editing == true; if book { books = value } else { music = value }; editing = nil; Task { await MediaCache.shared.trim(books: book, limitMB: value); await measure() } }.buttonStyle(AndroidButtonStyle(primary: true))
+            }.androidPage(editing == true ? "有声书缓存上限" : "音乐缓存上限", category: "") }.presentationDetents([.medium]).presentationCornerRadius(30)
+        }
+    }
+    private func cachePanel(_ book: Bool) -> some View {
+        AndroidSection(book ? "有声书" : "音乐") {
+            Text(String(format: "已用 %.1f MB   /   %@", Double(book ? bookBytes : musicBytes) / 1_048_576, (book ? books : music) == 0 ? "关闭" : "\(book ? books : music) MB")).font(.system(size: 14)).foregroundStyle(Palette.muted)
+            HStack(spacing: 8) { Button("设置上限") { limit = String(book ? books : music); limitError = ""; editing = book }; Button("立即清理") { Task { await MediaCache.shared.clear(books: book); await measure() } } }
+        }
+    }
+    private func measure() async { musicBytes = await MediaCache.shared.size(books: false); bookBytes = await MediaCache.shared.size(books: true) }
 }
 struct LibraryAudioQualityView: View {
     @AppStorage("nav-bitrate-wifi") private var wifi = "0"
-    @AppStorage("nav-bitrate-mobile") private var mobile = "192"
+    @AppStorage("nav-bitrate-mobile") private var mobile = "0"
     @AppStorage("nav-format") private var format = "mp3"
-    var body: some View { AndroidForm { AndroidSection("在线播放音质") { AndroidChoice(title: "Wi-Fi", selection: $wifi, options: rateOptions); AndroidChoice(title: "移动网络", selection: $mobile, options: rateOptions); AndroidChoice(title: "转码格式", selection: $format, options: [("mp3", "MP3"), ("opus", "OPUS"), ("aac", "AAC")]); Text("下一首或重新播放时生效，需要服务器支持相应转码。下载保留原文件。").font(.system(size: 12)).foregroundStyle(Palette.muted) } }.androidPage("在线播放音质") }
-    private var rateOptions: [(String,String)] { [("0", "原始文件")] + ["128","192","256","320"].map { ($0, $0 + " kbps") } }
+    var body: some View { AndroidForm {
+        AndroidPreferenceGroup { AndroidChoice(title: "移动网络", selection: $mobile, options: rateOptions, icon: "chart.bar", detail: description(mobile)); AndroidPreferenceDivider(); AndroidChoice(title: "Wi-Fi", selection: $wifi, options: rateOptions, icon: "server.rack", detail: description(wifi)) }
+        AndroidPreferenceGroup { AndroidChoice(title: "转码格式", selection: $format, options: [("mp3", "MP3"), ("opus", "OPUS"), ("aac", "AAC")], icon: "music.note") }
+        Text("AAC 格式可能需要服务端额外配置才能正常播放。").font(.system(size: 14)).foregroundStyle(Palette.muted)
+        Text("适用于音乐库在线播放，下一首或重新播放时生效。无损表示按原文件播放；原文件若为有损格式，不会提升为无损。").font(.system(size: 14)).foregroundStyle(Palette.muted)
+    }.androidPage("在线播放音质", category: "").environment(\.androidMaterialSettings, true) }
+    private var rateOptions: [(String,String)] { [("0", "无损"), ("128", "较低 · 128 kbps"), ("192", "标准 · 192 kbps"), ("256", "较高 · 256 kbps"), ("320", "极高 · 320 kbps")] }
+    private func description(_ rate: String) -> String { rate == "0" ? "不转码，按服务端原始音频播放。" : "转码为约 \(rate) kbps。" }
 }
 struct AboutView: View {
-    var body: some View { AndroidForm { AndroidSection { Text("音浪 YinLang").font(.system(size: 25, weight: .bold)); LabeledContent("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""); Link("GitHub 主页", destination: URL(string: "https://github.com/tbslantian")!); NavigationLink { LicenseView() } label: { AndroidRow(title: "第三方许可", icon: "info.circle") }.buttonStyle(.plain) } }.androidPage("关于") }
+    var body: some View { AndroidForm {
+        VStack(spacing: 6) { Image("yinlang_neon").resizable().scaledToFit().frame(width: 80, height: 80).clipShape(RoundedRectangle(cornerRadius: 18)).padding(.bottom, 10); Text("音浪").font(.system(size: 27, weight: .bold)); Text("YinLang").font(.system(size: 15)).foregroundStyle(Palette.muted) }.frame(maxWidth: .infinity).padding(.vertical, 24)
+        AndroidPreferenceGroup { AndroidPreferenceRow(icon: "info.circle", title: "版本号", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "", actionable: false) }
+        Link(destination: URL(string: "https://github.com/tbslantian")!) { AndroidRow(title: "GitHub", subtitle: "github.com/tbslantian", icon: "puzzlepiece.extension") }.buttonStyle(.plain)
+        NavigationLink { LicenseView() } label: { AndroidRow(title: "第三方许可", icon: "info.circle") }.buttonStyle(.plain)
+    }.androidPage("关于") }
 }
 
 struct QualityPicker: View {
@@ -160,7 +217,7 @@ struct PluginSettingsView: View {
             }
             if books {
                 AndroidSection("听书源登录与设置") {
-                    ForEach(Array(sourceRows.enumerated()), id: \.offset) { _, source in NavigationLink(source.string("name")) { BookSourceSettings(source: source) } }
+                    ForEach(Array(sourceRows.enumerated()), id: \.offset) { _, source in NavigationLink { BookSourceSettings(source: source) } label: { AndroidRow(title: source.string("name"), subtitle: source.string("group"), icon: "puzzlepiece.extension") }.buttonStyle(.plain) }
                     if !sourceError.isEmpty { Text(sourceError).font(.caption).foregroundStyle(Palette.muted) }
                 }
                 AndroidSection { Button("重新安装官方公开源合集 5.7") { Task { UserDefaults.standard.set(false, forKey: "bundled-books-installed"); await store.installBundledBooks(); await loadSources() } } }
@@ -202,17 +259,27 @@ struct BookSourceSettings: View {
     @EnvironmentObject var store: AppStore
     var source: JSONObject
     @State private var values: JSONObject = [:]
+    private func binding(_ key: String, row: JSONObject) -> Binding<String> { Binding(get: { if let value = values[key] { return String(describing: value) }; return row.string("default", "defaultValue") }, set: { values[key] = $0 }) }
     var body: some View {
         AndroidForm {
-            if let url = URL(string: source.string("loginUrl")), ["https", "http"].contains(url.scheme ?? "") { NavigationLink("在应用内登录") { LoginWebView(url: url).androidPage(source.string("name")).navigationBarTitleDisplayMode(.inline) } }
-            ForEach(Array(source.rows("config").enumerated()), id: \.offset) { _, row in
-                let key = row.string("key", "id")
-                if row.string("type") == "boolean" || row.string("type") == "switch" || row["default"] is Bool {
-                    Toggle(row.string("label", "title", "name"), isOn: Binding(get: { values[key] as? Bool ?? row["default"] as? Bool ?? false }, set: { values[key] = $0 }))
-                } else { TextField(row.string("label", "title", "name"), text: Binding(get: { values[key] as? String ?? row.string("default") }, set: { values[key] = $0 })) }
+            if let url = URL(string: source.string("loginUrl")), ["https", "http"].contains(url.scheme ?? "") { NavigationLink { LoginWebView(url: url).androidPage(source.string("name")) } label: { AndroidRow(title: "在应用内登录", icon: "person") }.buttonStyle(.plain) }
+            AndroidSection {
+                ForEach(Array(source.rows("config").enumerated()), id: \.offset) { _, row in
+                    let key = row.string("key", "id", "name"), label = row.string("label", "title", "name", "key")
+                    if row.string("type") == "boolean" || row.string("type") == "switch" || row["default"] is Bool {
+                        Toggle(label, isOn: Binding(get: { let value = binding(key, row: row).wrappedValue.lowercased(); return value == "true" || value == "1" }, set: { values[key] = $0 }))
+                    } else if row.string("type") == "select", let options = row["options"] as? [Any] {
+                        AndroidChoice(title: label, selection: binding(key, row: row), options: options.map { option in if let option = option as? JSONObject { return (option.string("value", "name"), option.string("label", "name", "value")) }; let text = String(describing: option); return (text,text) })
+                    } else { AndroidField(title: label, text: binding(key, row: row), secure: row.string("type") == "password").keyboardType(row.string("type") == "number" ? .numbersAndPunctuation : .default) }
+                }
+                Button("保存源设置") { Task { do { _ = try await store.bookCall(source.string("id"), pluginID: source.string("_plugin"), action: "setPrefs", args: [values]); store.message = "已保存" } catch { store.message = error.localizedDescription } } }.buttonStyle(AndroidButtonStyle(primary: true))
             }
-            Button("保存源设置") { Task { do { _ = try await store.bookCall(source.string("id"), pluginID: source.string("_plugin"), action: "setPrefs", args: [values]); store.message = "已保存" } catch { store.message = error.localizedDescription } } }
-        }.androidPage(source.string("name"))
+        }.androidPage(source.string("name"), category: "听书源设置").onAppear {
+            for row in source.rows("config") {
+                let key = row.string("key", "id", "name")
+                if let text = UserDefaults.standard.string(forKey: source.string("_plugin") + ":" + source.string("id") + ":pref:" + key), let data = text.data(using: .utf8), let value = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) { values[key] = value }
+            }
+        }
     }
 }
 

@@ -67,17 +67,17 @@ struct LibraryDiscoveryView: View {
                 ForEach(kinds, id: \.self) { key in
                     VStack(alignment: .leading, spacing: 12) {
                         HStack { Text(title(key)).font(.title3.bold()); Spacer(); Button { Task { await load(key) } } label: { YLIcon(systemName: "arrow.clockwise") }.disabled(loading.contains(key)).accessibilityLabel("刷新" + title(key))
-                            NavigationLink("全部") { LibraryListView(kind: key == "songs" && discover == "songs" ? "discoverySongs" : "albums", identifier: key == "songs" ? "random" : key, title: title(key), snapshot: sections[key]) }.font(.caption).disabled(sections[key]?.isEmpty != false)
+                            NavigationLink("查看全部") { LibraryListView(kind: key == "songs" && discover == "songs" ? "discoverySongs" : "albums", identifier: key == "songs" ? "random" : key, title: title(key), snapshot: sections[key]) }.font(.caption).disabled(sections[key]?.isEmpty != false)
                         }
                         if loading.contains(key) && sections[key] == nil { ProgressView() }
                         if let error = failures[key] { ErrorPanel(text: error) { Task { await load(key) } } }
                         if key == "songs" && discover == "songs" {
                             if let rows = sections[key], !rows.isEmpty {
                                 Button("播放全部", systemImage: "play.fill") { player.play(rows) }.font(.subheadline)
-                                ForEach(rows.prefix(6)) { item in SongRow(item: item) { player.play(rows, at: rows.firstIndex(of: item) ?? 0) } }
+                                ForEach(rows.prefix(4)) { item in SongRow(item: item) { player.play(rows, at: rows.firstIndex(of: item) ?? 0) } }
                             }
                         } else if key == "frequent" {
-                            ForEach(Array((sections[key] ?? []).prefix(5).enumerated()), id: \.offset) { index, item in NavigationLink { LibraryListView(kind: "album", identifier: item.key, title: item.title) } label: { HStack { Text(String(index + 1)).font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.muted).frame(width: 24); MediaRow(item: item) } }.buttonStyle(.plain) }
+                            ForEach(Array((sections[key] ?? []).prefix(3).enumerated()), id: \.offset) { index, item in NavigationLink { LibraryListView(kind: "album", identifier: item.key, title: item.title) } label: { HStack { Text(String(index + 1)).font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.muted).frame(width: 24); MediaRow(item: item) } }.buttonStyle(.plain) }
                         } else {
                             ScrollView(.horizontal, showsIndicators: false) { LazyHStack(alignment: .top, spacing: 14) {
                                 ForEach(sections[key] ?? []) { item in NavigationLink { LibraryListView(kind: "album", identifier: item.key, title: item.title) } label: { VStack(alignment: .leading, spacing: 8) { Artwork(item: item, size: 145); Text(item.title).font(.subheadline).lineLimit(1).foregroundStyle(Palette.ink); Text(item.subtitle).font(.caption).lineLimit(1).foregroundStyle(Palette.muted) }.frame(width: 145) } }
@@ -211,10 +211,17 @@ struct AddToPlaylistView: View {
     @State private var create = false
     @State private var name = ""
     var body: some View {
-        AndroidList { Button("新建歌单并加入", systemImage: "plus") { create = true }; ForEach(rows) { row in Button(row.title) { Task { do { guard let nav = store.nav else { return }; let latest = try await nav.playlist(row.key); guard nav.canEdit(latest) else { throw AppFailure.message("没有修改此歌单的权限") }; _ = try await nav.get("updatePlaylist", [.init(name: "playlistId", value: row.key), .init(name: "songIdToAdd", value: item.key)]); dismiss() } catch { store.message = error.localizedDescription } } } } }
+        AndroidList {
+            Button { create = true } label: { AndroidRow(title: "新建歌单并加入", icon: "plus") }
+            ForEach(rows) { row in Button { Task { await add(row) } } label: { MediaRow(item: row) } }
+        }
             .androidPage("加入歌单").task { guard let nav = store.nav else { return }; do { rows = try await nav.get("getPlaylists").object("playlists").rows("playlist").filter { $0.string("owner").caseInsensitiveCompare(nav.user) == .orderedSame }.map { store.libraryItem($0, kind: "playlist") } } catch { store.message = error.localizedDescription } }
             .alert("新建歌单", isPresented: $create) { TextField("名称", text: $name); Button("创建并加入") { Task { do { guard let nav = store.nav, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }; _ = try await nav.get("createPlaylist", [.init(name: "name", value: name), .init(name: "songId", value: item.key)]); dismiss() } catch { store.message = error.localizedDescription } } }; Button("取消", role: .cancel) {} }
     }
+    private func add(_ row: MediaItem) async {
+        do { guard let nav = store.nav else { return }; let latest = try await nav.playlist(row.key); guard nav.canEdit(latest) else { throw AppFailure.message("没有修改此歌单的权限") }; _ = try await nav.get("updatePlaylist", [.init(name: "playlistId", value: row.key), .init(name: "songIdToAdd", value: item.key)]); dismiss() } catch { store.message = error.localizedDescription }
+    }
+
 }
 
 struct SongDetailsView: View {
@@ -226,6 +233,7 @@ struct SongDetailsView: View {
             AndroidSection("基础信息") { field("歌曲", "title"); field("艺术家", "artist"); field("专辑", "album"); field("时长（秒）", "duration"); field("音轨", "track"); field("碟号", "discNumber") }
             AndroidSection("扩展信息") { field("格式", "suffix"); field("码率（kbps）", "bitRate"); field("采样率（Hz）", "samplingRate"); field("位深", "bitDepth"); field("声道", "channelCount"); field("播放次数", "playCount"); field("最后播放", "played"); field("文件路径", "path"); field("文件大小", "size") }
             AndroidSection("回放增益") { ForEach(["trackGain", "albumGain", "trackPeak", "albumPeak"], id: \.self) { key in LabeledContent(key, value: raw.object("replayGain").string(key).isEmpty ? "无数据" : raw.object("replayGain").string(key)) } }
+            NavigationLink { SongLyricsView(item: item) } label: { AndroidRow(title: "查看歌词", icon: "quote.bubble") }
             AndroidSection("关联") {
                 if !raw.string("albumId").isEmpty { NavigationLink("专辑 · " + raw.string("album")) { LibraryListView(kind: "album", identifier: raw.string("albumId"), title: raw.string("album")) } }
                 ForEach(Array(raw.rows("artists").enumerated()), id: \.offset) { _, artist in NavigationLink("艺术家 · " + artist.string("name")) { LibraryListView(kind: "artist", identifier: artist.string("id"), title: artist.string("name")) } }
@@ -234,4 +242,11 @@ struct SongDetailsView: View {
         }.androidPage("歌曲详情").task { raw = item.raw; if let nav = store.nav, let song = try? await nav.get("getSong", [.init(name: "id", value: item.key)]).object("song"), song.string("id") == item.key { raw.merge(song) { _, new in new } } }
     }
     private func field(_ title: String, _ key: String) -> some View { LabeledContent(title, value: raw.string(key).isEmpty ? "无数据" : raw.string(key)).textSelection(.enabled) }
+}
+
+struct SongLyricsView: View {
+    @EnvironmentObject var store: AppStore
+    var item: MediaItem
+    @State private var text = "正在读取歌词…"
+    var body: some View { AndroidForm { Text(text).font(.system(size: 18)).lineSpacing(14).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 20) }.androidPage("歌词", category: item.title).task { let result = await store.lyrics(item); text = result.isEmpty ? "暂无歌词" : result } }
 }

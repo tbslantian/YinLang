@@ -36,6 +36,11 @@ final class LayoutTests: XCTestCase {
             else { XCTAssertTrue(app.buttons["播放器菜单"].firstMatch.waitForExistence(timeout: 8)) }
             XCTAssertEqual(app.navigationBars.count, 0, screen)
             capture("android-" + screen)
+            if screen == "personalization" {
+                app.buttons["首页模板"].firstMatch.tap()
+                XCTAssertTrue(app.staticTexts["选择喜欢的风格，返回首页即可看到。"].waitForExistence(timeout: 5))
+                capture("android-template-picker")
+            }
             if screen == "player" {
                 app.buttons["显示歌词"].firstMatch.tap()
                 XCTAssertTrue(app.staticTexts["风继续吹"].firstMatch.waitForExistence(timeout: 5))
