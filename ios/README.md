@@ -6,7 +6,7 @@
 
 - 修正长音频会话与 `allowAirPlay` 的非法组合，解决进入播放器前的 `OSStatus -50`。使用 Apple 推荐的 `.playback / .default / .longFormAudio` 配置，继续支持系统 AirPlay。
 - LX 源从脚本头读取 `@name`、`@version`，初始化时提供 `lx.currentScriptInfo`（包含作者、主页、说明和原脚本）。已安装源自动补回名称与版本，保留源 ID、启停状态和更新地址。
-- 新增本地 HTTP + PCM 音频回归测试，分别经过 LX 解析链路及 Navidrome 登录/stream 链路驱动 AVPlayer，验证播放时间实际前进和暂停/继续；iPhone、iPad 都运行这些测试。该测试不替代具体第三方源、服务器与真机听测。
+- 新增本地 HTTP + PCM 音频回归测试，分别经过 LX 解析链路及 Navidrome ping/stream 链路驱动 AVPlayer，验证播放时间实际前进和暂停/继续；iPhone、iPad 都运行这些测试。未签名模拟器直接配置测试账号，不依赖 Keychain 写入；该测试不替代具体第三方源、服务器与真机听测。
 
 ## 0.8.2 安装兼容修复
 

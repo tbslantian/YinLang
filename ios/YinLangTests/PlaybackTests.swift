@@ -101,7 +101,9 @@ final class PlaybackTests: XCTestCase {
             store.plugins = oldPlugins
             for key in keys { if let value = previous[key] ?? nil { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) } }
             if let recent { try? recent.write(to: Disk.support.appendingPathComponent("recent-music.json")) }
-            else { try? FileManager.default.removeItem(at: Disk.support.appendingPathComponent("recent-music.json")) }
+            else if FileManager.default.fileExists(atPath: Disk.support.appendingPathComponent("recent-music.json").path) {
+                try? FileManager.default.removeItem(at: Disk.support.appendingPathComponent("recent-music.json"))
+            }
             AudioEffects.shared.config = effects
         }
         defaults.removeObject(forKey: "nav-url"); defaults.removeObject(forKey: "nav-user")
@@ -111,7 +113,12 @@ final class PlaybackTests: XCTestCase {
         let item: MediaItem
         if library {
             defaults.set("0", forKey: "nav-bitrate")
-            try await store.connect(base: server.base, user: "fixture", password: "fixture")
+            // Unsigned simulator hosts cannot reliably write Keychain credentials.
+            // Configure the fixture account directly, then use the production
+            // Navidrome ping, account identity and stream resolution paths.
+            defaults.set(server.base, forKey: "nav-url"); defaults.set("fixture", forKey: "nav-user")
+            let nav = try XCTUnwrap(store.nav)
+            _ = try await nav.get("ping")
             item = store.libraryItem(["id": UUID().uuidString, "title": "Navidrome PCM", "artist": "fixture"])
         } else {
             let script = """
