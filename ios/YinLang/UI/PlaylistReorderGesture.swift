@@ -84,7 +84,6 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         }
         func detach() {
             displayLink?.invalidate(); displayLink = nil
-            scroll?.panGestureRecognizer.isEnabled = true
             if let gesture { gesture.view?.removeGestureRecognizer(gesture) }
             lifted?.layer.removeAllAnimations(); lifted?.removeFromSuperview(); lifted = nil
             gesture = nil; scroll = nil; key = nil; settling = false
@@ -98,9 +97,6 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             if UITestFixtures.active { parent.report("begin=\(begins);point=\(Int(point.x))/\(Int(point.y));frames=\(parent.frames.count);anchor=\(Int(anchor.bounds.width))/\(Int(anchor.bounds.height))") }
 #endif
             return begins
-        }
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-            other === scroll?.panGestureRecognizer
         }
         @objc private func handle(_ recognizer: UILongPressGestureRecognizer) {
             guard let anchor, let window = anchor.window, let scroll else { return }
@@ -129,7 +125,9 @@ struct PlaylistReorderGesture: UIViewRepresentable {
 #if DEBUG
                 originalSize = rect.size; maximumSizeError = 0; moveCount = 0; scrollDistance = 0
 #endif
-                scroll.panGestureRecognizer.isEnabled = false
+                // Once the stationary long press wins, normal gesture
+                // arbitration keeps the pan from starting. Disabling the
+                // scroll view's recognizer here can cancel this touch sequence.
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 parent.begin(selected)
                 timestamp = 0
@@ -142,7 +140,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         }
         private func updatePosition() {
             guard let anchor, let window = anchor.window, let lifted, let key, let scroll, !slots.isEmpty else { return }
-            let viewport = scroll.convert(scroll.bounds, to: window).intersection(window.bounds)
+            let viewport = scroll.convert(scroll.bounds.inset(by: scroll.adjustedContentInset), to: window).intersection(window.bounds)
             let half = lifted.bounds.height / 2
             let y = min(viewport.maxY - half, max(viewport.minY + half, finger.y - touchOffset))
             // No transform or implicit animation: the lifted row follows the
@@ -161,7 +159,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         @objc private func tick(_ link: CADisplayLink) {
             guard let scroll, let anchor, let window = anchor.window, key != nil else { return }
             let dt = timestamp == 0 ? link.duration : min(0.05, link.timestamp - timestamp); timestamp = link.timestamp
-            let viewport = scroll.convert(scroll.bounds, to: window).intersection(window.bounds)
+            let viewport = scroll.convert(scroll.bounds.inset(by: scroll.adjustedContentInset), to: window).intersection(window.bounds)
             let edge: CGFloat = 64
             let up = max(0, min(1, (viewport.minY + edge - finger.y) / edge))
             let down = max(0, min(1, (finger.y - viewport.maxY + edge) / edge))
@@ -179,7 +177,6 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         private func finish() {
             guard key != nil, let anchor, let window = anchor.window, let lifted else { return }
             displayLink?.invalidate(); displayLink = nil; settling = true
-            scroll?.panGestureRecognizer.isEnabled = true
             key = nil
 #if DEBUG
             if UITestFixtures.active {
