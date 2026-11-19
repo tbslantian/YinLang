@@ -29,6 +29,11 @@ final class CoreTests: XCTestCase {
         defaults.set(true, forKey: NextTrackSettings.cacheKey)
         XCTAssertTrue(NextTrackSettings(defaults: defaults).enabled)
         XCTAssertTrue(NextTrackSettings(defaults: defaults).shouldStart(elapsed: 70, duration: 100))
+        XCTAssertEqual(CacheDownloadSettings.threads(defaults: defaults), 3)
+        defaults.set(99, forKey: CacheDownloadSettings.key)
+        XCTAssertEqual(CacheDownloadSettings.threads(defaults: defaults), 5)
+        defaults.set(0, forKey: CacheDownloadSettings.key)
+        XCTAssertEqual(CacheDownloadSettings.threads(defaults: defaults), 1)
     }
     func testAudioParametersKeepUnitsAndActualValues() {
         XCTAssertEqual(AudioStreamInfo(format: "MP3", bitsPerSecond: 320000, sampleRate: 44100).text, "MP3 · 320 kbps · 44.1 kHz")

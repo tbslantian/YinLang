@@ -103,6 +103,7 @@ private struct HomeTemplatePreview: View {
     }
 }
 struct CacheSettingsView: View {
+    @AppStorage(CacheDownloadSettings.key) private var cacheThreads = 3
     @AppStorage("music-cache") private var music = 512
     @AppStorage("book-cache") private var books = 512
     @State private var musicBytes: Int64 = 0
@@ -113,6 +114,10 @@ struct CacheSettingsView: View {
     var body: some View { AndroidForm {
         Text("自动清理最久未使用的缓存。手动保存的离线下载独立存放。").font(.system(size: 14)).foregroundStyle(Palette.muted)
         cachePanel(false); cachePanel(true)
+        AndroidSection("在线缓存") {
+            AndroidChoice(title: "缓存线程数", selection: Binding(get: { String(min(5, max(1, cacheThreads))) }, set: { cacheThreads = min(5, max(1, Int($0) ?? 3)) }), options: (1...5).map { (String($0), "\($0) 线程") })
+            Text("默认 3 线程，最多 5 线程。当前歌曲与下一首预缓存共享上限；服务器不支持分段时使用单线程。").font(.caption).foregroundStyle(Palette.muted)
+        }
     }.androidPage("缓存管理", category: "总设置").task { await measure() }
         .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
             NavigationStack { AndroidForm {

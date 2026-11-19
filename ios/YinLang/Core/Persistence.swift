@@ -64,10 +64,10 @@ actor MediaCache {
         let id = UUID()
         let task = Task<URL?, Never> {
             do {
-                var request = URLRequest(url: url); request.allHTTPHeaderFields = headers; request.timeoutInterval = 90
-                let (temp, response) = try await URLSession.shared.download(for: request)
+                let (temp, response) = try await CacheDownloader.download(url, headers: headers, maximumBytes: Int64(limitMB) * 1_048_576)
                 defer { try? FileManager.default.removeItem(at: temp) }
-                guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                let http = response
+                guard http.statusCode == 200,
                       !((http.mimeType ?? "").contains("text") || (http.mimeType ?? "").contains("json") || (http.mimeType ?? "").contains("mpegurl")) else { return nil }
                 let size = (try temp.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
                 guard size > 0, size <= limitMB * 1_048_576, Self.hasAudioData(temp),

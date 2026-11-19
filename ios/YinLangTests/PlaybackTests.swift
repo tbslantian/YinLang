@@ -9,8 +9,13 @@ private final class PlaybackServer: @unchecked Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "YinLang.PlaybackFixture")
     private let wave: Data
+    var audioData: Data { wave }
     private var connections: [NWConnection] = []
     private var requests: [(target: String, ranged: Bool)] = []
+    private var activeRanges = 0
+    private var peakRanges = 0
+    var maximumConcurrentRanges: Int { queue.sync { peakRanges } }
+    func rangeRequests(containing value: String) -> Int { queue.sync { requests.filter { $0.target.contains(value) && $0.ranged }.count } }
     func fullRequests(containing value: String) -> Int { queue.sync { requests.filter { $0.target.contains(value) && !$0.ranged }.count } }
     private(set) var port: UInt16 = 0
     var base: String { "http://127.0.0.1:\(port)" }
@@ -60,7 +65,7 @@ private final class PlaybackServer: @unchecked Sendable {
         let audio = target.hasPrefix("/audio.wav") || target.hasPrefix("/rest/stream.view")
         var body = audio ? wave : Data("{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\"}}".utf8)
         var code = "200 OK", extra = ""
-        if audio, let range = lines.first(where: { $0.lowercased().hasPrefix("range: bytes=") }) {
+        if audio, !target.contains("ignore-range"), let range = lines.first(where: { $0.lowercased().hasPrefix("range: bytes=") }) {
             let parts = range.split(separator: "=", maxSplits: 1).last!.split(separator: "-", omittingEmptySubsequences: false)
             let start = Int(parts.first ?? "") ?? 0
             let end = min(wave.count - 1, parts.count > 1 ? Int(parts[1]) ?? wave.count - 1 : wave.count - 1)
@@ -69,13 +74,58 @@ private final class PlaybackServer: @unchecked Sendable {
                 extra = "Content-Range: bytes \(start)-\(end)/\(wave.count)\r\n"
             } else { body = Data(); code = "416 Range Not Satisfiable"; extra = "Content-Range: bytes */\(wave.count)\r\n" }
         }
+        if target.contains("bad-range"), code.hasPrefix("206") { extra = "Content-Range: bytes 0-0/\(wave.count)\r\n" }
         let header = "HTTP/1.1 \(code)\r\nContent-Type: \(audio ? "audio/wav" : "application/json")\r\nContent-Length: \(body.count)\r\nAccept-Ranges: bytes\r\n\(extra)Connection: close\r\n\r\n"
         let head = request.hasPrefix("HEAD ")
-        connection.send(content: Data(header.utf8) + (head ? Data() : body), isComplete: true, completion: .contentProcessed { _ in connection.cancel() })
+        let reply = Data(header.utf8) + (head ? Data() : body)
+        let delayed = target.contains("parallel-audit") && code.hasPrefix("206")
+        if delayed { activeRanges += 1; peakRanges = max(peakRanges, activeRanges) }
+        let send: @Sendable () -> Void = { [weak self] in
+            connection.send(content: reply, isComplete: true, completion: .contentProcessed { _ in
+                if delayed { self?.activeRanges -= 1 }; connection.cancel()
+            })
+        }
+        if delayed { queue.asyncAfter(deadline: .now() + .milliseconds(150), execute: send) } else { send() }
     }
 }
 
 final class PlaybackTests: XCTestCase {
+    func testCacheDownloadUsesThreeWorkersAndSharesLimitAcrossFiles() async throws { try await exerciseCacheWorkers(threads: 3) }
+    func testCacheDownloadSupportsFiveWorkers() async throws { try await exerciseCacheWorkers(threads: 5) }
+    private func exerciseCacheWorkers(threads: Int) async throws {
+        let server = try PlaybackServer(); try await server.start(); defer { server.stop() }
+        let defaults = UserDefaults.standard, previous = defaults.object(forKey: CacheDownloadSettings.key)
+        defer { if let previous { defaults.set(previous, forKey: CacheDownloadSettings.key) } else { defaults.removeObject(forKey: CacheDownloadSettings.key) } }
+        defaults.set(threads, forKey: CacheDownloadSettings.key)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<2 {
+                group.addTask {
+                    let (file, response) = try await CacheDownloader.download(URL(string: server.base + "/audio.wav?parallel-audit=\(index)")!, headers: [:], maximumBytes: 16_777_216)
+                    defer { try? FileManager.default.removeItem(at: file) }
+                    XCTAssertEqual(response.statusCode, 200)
+                    let bytes = try Data(contentsOf: file)
+                    XCTAssertEqual(bytes, server.audioData, "分段拼接必须逐字节保持原始音频")
+                }
+            }
+            try await group.waitForAll()
+        }
+        XCTAssertEqual(server.rangeRequests(containing: "parallel-audit"), (threads + 1) * 2)
+        XCTAssertEqual(server.fullRequests(containing: "parallel-audit"), 0)
+        XCTAssertGreaterThanOrEqual(server.maximumConcurrentRanges, 2)
+        XCTAssertLessThanOrEqual(server.maximumConcurrentRanges, threads)
+    }
+    func testCacheDownloadFallsBackWhenRangeIgnoredOrMalformed() async throws {
+        let server = try PlaybackServer(); try await server.start(); defer { server.stop() }
+        for query in ["ignore-range", "bad-range"] {
+            let (file, response) = try await CacheDownloader.download(URL(string: server.base + "/audio.wav?" + query)!, headers: [:], maximumBytes: 16_777_216)
+            defer { try? FileManager.default.removeItem(at: file) }
+            XCTAssertEqual(response.statusCode, 200)
+            XCTAssertEqual(try Data(contentsOf: file).count, 44 + 44100 * 8 * 2)
+        }
+        XCTAssertEqual(server.rangeRequests(containing: "ignore-range"), 1)
+        XCTAssertEqual(server.fullRequests(containing: "ignore-range"), 0, "忽略 Range 的完整响应应直接复用")
+        XCTAssertEqual(server.fullRequests(containing: "bad-range"), 1)
+    }
     @MainActor func testPreparseStartsAtSeventyPercentAndNextReusesVerifiedAddress() async throws { try await exercisePreparation(precache: false) }
     @MainActor func testPrecacheWorksIndependentlyAndNextPlaysOffline() async throws { try await exercisePreparation(precache: true) }
     @MainActor private func exercisePreparation(precache: Bool) async throws {
@@ -115,7 +165,7 @@ final class PlaybackTests: XCTestCase {
             }
             XCTAssertEqual(player.resolutionNotice?.phase, .cached)
             XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
-            XCTAssertEqual(server.fullRequests(containing: "next=1"), 1)
+            XCTAssertGreaterThanOrEqual(server.rangeRequests(containing: "next=1"), 4)
             server.stop()
         } else { XCTAssertEqual(server.fullRequests(containing: "next=1"), 0, "预解析不能下载整首音频") }
         player.next()
