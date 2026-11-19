@@ -7,49 +7,98 @@ struct LibraryView: View {
     @State private var error = ""
     @State private var create = false
     @State private var name = ""
+    @State private var songCount: Int?
+    @State private var countAccount = ""
+    @State private var navigationWidth: CGFloat = 360
+    private var shortcutHeight: CGFloat { max(72, min(104, navigationWidth * 0.085)) }
+    private var navigationHeight: CGFloat { shortcutHeight * 3 + 16 }
     private var orderKey: String { "playlist-order:" + (store.nav?.identity ?? "") }
+    private var summary: String {
+        let alias = UserDefaults.standard.string(forKey: "nav-alias").flatMap { $0.isEmpty ? nil : $0 } ?? "Navidrome"
+        guard countAccount == store.nav?.identity, let songCount else { return alias }
+        return alias + " · \(songCount) 首歌曲"
+    }
     var body: some View {
         AndroidForm {
             if store.nav == nil {
                 NavigationLink { ConnectionView() } label: { ModuleCard(title: "连接音乐库", subtitle: "浏览服务器上的歌曲、专辑和歌单", icon: "server.rack", color: Color(rgb: 0x2d4e76)) }.buttonStyle(.plain)
                 NavigationLink("添加服务器") { ConnectionView() }.buttonStyle(AndroidButtonStyle(primary: true))
             } else {
-                Text(UserDefaults.standard.string(forKey: "nav-alias").flatMap { $0.isEmpty ? nil : $0 } ?? "Navidrome").font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.muted)
+                Text(summary).font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.muted).accessibilityIdentifier("library-song-count")
                 NavigationLink { CatalogView(mode: "search", library: true) } label: { SearchEntry(title: "搜索资料库") }.buttonStyle(.plain)
                 GeometryReader { proxy in
                     HStack(spacing: 10) {
-                        NavigationLink { LibraryDiscoveryView() } label: { DiscoveryHero() }.frame(width: (proxy.size.width - 10) * 1.3 / 2.3)
+                        NavigationLink { LibraryDiscoveryView() } label: { DiscoveryHero(showsArrow: false) }.frame(width: (proxy.size.width - 10) * 1.3 / 2.3, height: proxy.size.height).accessibilityIdentifier("library-discovery")
                         VStack(spacing: 8) {
                             smallLink("歌曲", icon: "music.note", kind: "songs")
                             smallLink("专辑", icon: "opticaldisc", kind: "albums")
-                            HStack(spacing: 0) { NavigationLink { LibraryListView(kind: "favorites", title: "我喜欢的") } label: { LibraryShortcut(title: "我喜欢的", icon: "heart") }; Button { Task { if let nav = store.nav, let songs = try? await nav.get("getStarred2").object("starred2").rows("song"), !songs.isEmpty { player.play(songs.map { store.libraryItem($0) }) } } } label: { YLIcon(systemName: "play.fill", size: 16).foregroundStyle(Palette.accent).frame(width: 38, height: 56) }.accessibilityLabel("播放服务器收藏") }.androidSurface(radius: 18)
-                        }
-                    }
-                }.frame(height: 184).buttonStyle(.plain)
+                            HStack(spacing: 0) { NavigationLink { LibraryListView(kind: "favorites", title: "我喜欢的") } label: { LibraryShortcut(title: "我喜欢的", icon: "heart", height: shortcutHeight) }; Button { Task { if let nav = store.nav, let songs = try? await nav.get("getStarred2").object("starred2").rows("song"), !songs.isEmpty { player.play(songs.map { store.libraryItem($0) }) } } } label: { YLIcon(systemName: "play.fill", size: 16).foregroundStyle(Palette.accent).frame(width: 44, height: shortcutHeight) }.accessibilityLabel("播放服务器收藏") }.androidSurface(radius: 18).accessibilityIdentifier("library-favorites-shortcut")
+                        }.frame(maxWidth: .infinity)
+                    }.frame(width: proxy.size.width, height: proxy.size.height)
+                        .onAppear { navigationWidth = proxy.size.width }.onChange(of: proxy.size.width) { _, width in navigationWidth = width }
+                }.frame(height: navigationHeight).buttonStyle(.plain)
                 HStack { SectionTitle(title: "我的歌单"); Button { create = true } label: { YLIcon(systemName: "plus").frame(width: 44, height: 44) }.accessibilityLabel("创建服务器歌单") }
                 if !error.isEmpty { ErrorPanel(text: error) { Task { await load() } } }
                 if playlists.isEmpty && error.isEmpty { Text("还没有服务器歌单").font(.system(size: 13)).foregroundStyle(Palette.muted) }
                 ForEach(playlists) { item in
-                    HStack(spacing: 0) {
-                        NavigationLink { LibraryListView(kind: "playlist", identifier: item.key, title: item.title) } label: { HStack(spacing: 12) { Artwork(item: item); VStack(alignment: .leading, spacing: 5) { Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink); Text("\(item.raw.string("songCount")) 首歌曲").font(.system(size: 13)).foregroundStyle(Palette.muted) }; Spacer() }.padding(11) }
-                        NavigationLink { PlaylistEditor(item: item) } label: { YLIcon(systemName: "ellipsis", size: 19).frame(width: 48, height: 48) }.accessibilityLabel("歌单操作")
-                    }.androidSurface().buttonStyle(.plain).draggable(item.key).dropDestination(for: String.self) { keys, _ in guard let key = keys.first, let from = playlists.firstIndex(where: { $0.key == key }), let to = playlists.firstIndex(of: item) else { return false }; playlists.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to); UserDefaults.standard.set(playlists.map(\.key), forKey: orderKey); return true }
+                    LibraryPlaylistRow(item: item).dropDestination(for: String.self) { keys, _ in guard let key = keys.first, let from = playlists.firstIndex(where: { $0.key == key }), let to = playlists.firstIndex(of: item) else { return false }; playlists.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to); UserDefaults.standard.set(playlists.map(\.key), forKey: orderKey); return true }
                 }
             }
         }.androidPage("音乐库", category: "音乐") { NavigationLink { ConnectionView() } label: { Image("navidrome_logo").resizable().scaledToFit().frame(width: 34, height: 34).frame(width: 48, height: 48) }.accessibilityLabel("音乐库连接与音质设置") }
             .task(id: store.connectionRevision) { await load() }.refreshable { await load() }
             .alert("创建歌单", isPresented: $create) { TextField("歌单名称", text: $name); Button("创建") { Task { do { guard let nav = store.nav, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }; _ = try await nav.get("createPlaylist", [.init(name: "name", value: name)]); name = ""; await load() } catch { store.message = error.localizedDescription } } }; Button("取消", role: .cancel) {} }
     }
-    private func smallLink(_ title: String, icon: String, kind: String) -> some View { NavigationLink { LibraryListView(kind: kind, title: title) } label: { LibraryShortcut(title: title, icon: icon) } }
+    private func smallLink(_ title: String, icon: String, kind: String) -> some View { NavigationLink { LibraryListView(kind: kind, title: title) } label: { LibraryShortcut(title: title, icon: icon, height: shortcutHeight) }.accessibilityIdentifier("library-" + kind + "-shortcut") }
     private func load() async {
-        guard let nav = store.nav else { playlists = []; return }; error = ""
+        guard let nav = store.nav else { playlists = []; songCount = nil; countAccount = ""; return }; error = ""
+        if countAccount != nav.identity { songCount = nil; countAccount = nav.identity }
+        async let total = try? nav.songCount()
         do {
-            let rows = try await nav.get("getPlaylists").object("playlists").rows("playlist").map { store.libraryItem($0, kind: "playlist") }
+            let result = try await nav.get("getPlaylists").object("playlists").rows("playlist")
+            guard !Task.isCancelled, store.nav?.identity == nav.identity else { return }
+            let rows = result.map { store.libraryItem($0, kind: "playlist") }
             let order = UserDefaults.standard.stringArray(forKey: orderKey) ?? []
             playlists = rows.sorted { (order.firstIndex(of: $0.key) ?? Int.max) < (order.firstIndex(of: $1.key) ?? Int.max) }
-        } catch { self.error = error.localizedDescription }
+        } catch { if !Task.isCancelled, store.nav?.identity == nav.identity { self.error = error.localizedDescription } }
+        let count = await total
+        guard !Task.isCancelled, store.nav?.identity == nav.identity else { return }
+        if let count { songCount = count }
     }
     private func move(_ item: MediaItem, offset: Int) { guard let index = playlists.firstIndex(of: item), playlists.indices.contains(index + offset) else { return }; playlists.swapAt(index, index + offset); UserDefaults.standard.set(playlists.map(\.key), forKey: orderKey) }
+}
+
+private struct LibraryPlaylistRow: View {
+    @EnvironmentObject private var store: AppStore
+    let item: MediaItem
+    @State private var rowSize = CGSize(width: 320, height: 66)
+    private var label: some View {
+        HStack(spacing: 12) {
+            Artwork(item: item)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1)
+                Text("\(item.raw.string("songCount")) 首歌曲").font(.system(size: 13)).foregroundStyle(Palette.muted)
+            }
+            Spacer(minLength: 0)
+        }.padding(11).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+    }
+    private var menuIcon: some View { YLIcon(systemName: "ellipsis", size: 19).foregroundStyle(Palette.accent).frame(width: 48, height: 48).contentShape(Rectangle()) }
+    var body: some View {
+        HStack(spacing: 0) {
+            NavigationLink { LibraryListView(kind: "playlist", identifier: item.key, title: item.title) } label: { label }
+                .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("library-playlist-open-" + item.key)
+            NavigationLink { PlaylistEditor(item: item) } label: { menuIcon }.accessibilityLabel("歌单操作")
+        }.frame(maxWidth: .infinity).androidSurface().buttonStyle(.plain)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.onAppear { rowSize = proxy.size }.onChange(of: proxy.size) { _, size in rowSize = size }
+                }
+            }
+            .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 16))
+            .draggable(item.key) {
+                HStack(spacing: 0) { label; menuIcon }
+                    .frame(width: rowSize.width, height: rowSize.height).androidSurface().environmentObject(store)
+            }
+    }
 }
 
 struct LibraryDiscoveryView: View {
@@ -228,7 +277,8 @@ struct LibraryListView: View {
             case "playlist": let playlist = try await nav.playlist(identifier); editable = nav.canEdit(playlist); result = playlist.rows("entry")
             default: result = []
             }
-            let items = result.map { store.libraryItem($0, kind: isSongs ? "song" : "album") }
+            let itemKind = isSongs ? "song" : kind == "playlists" ? "playlist" : kind == "artists" ? "artist" : "album"
+            let items = result.map { store.libraryItem($0, kind: itemKind) }
             if next { rows += items } else { rows = items }; original = rows; offset = requested + result.count; more = ["songs", "albums"].contains(kind) && result.count == 50
         } catch { self.error = error.localizedDescription }
     }

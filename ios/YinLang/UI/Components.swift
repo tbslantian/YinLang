@@ -5,12 +5,12 @@ struct Artwork: View {
     var item: MediaItem
     var size: CGFloat = 44
     var body: some View {
-        RemoteImage(url: store.artwork(item)) { image in image.resizable().scaledToFill() } placeholder: { ZStack { Color(rgb: item.kind == "book" || item.kind == "episode" ? 0xf1e2cc : 0x173c33); Image(item.kind == "book" || item.kind == "episode" ? "android-hero_books" : "yinlang_neon").resizable().scaledToFit().padding(size * 0.1) } }.frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: size > 100 ? 19 : 9))
+        RemoteImage(url: store.artwork(item)) { image in image.resizable().scaledToFill().frame(width: size, height: size).clipped() } placeholder: { ZStack { Color(rgb: item.kind == "book" || item.kind == "episode" ? 0xf1e2cc : 0x173c33); Image(item.kind == "book" || item.kind == "episode" ? "android-hero_books" : "yinlang_neon").resizable().scaledToFit().padding(size * 0.1) } }.frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: size > 100 ? 19 : 9)).allowsHitTesting(false).accessibilityHidden(true)
     }
 }
 struct MediaRow: View {
     var item: MediaItem
-    var body: some View { HStack(spacing: 12) { Artwork(item: item); VStack(alignment: .leading, spacing: 5) { Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(2); if !item.subtitle.isEmpty { Text(item.subtitle).font(.system(size: 13)).foregroundStyle(Palette.muted).lineLimit(2) } }.frame(maxWidth: .infinity, alignment: .leading); YLIcon(systemName: "chevron.right", size: 15).foregroundStyle(Palette.muted) }.padding(11).androidSurface() }
+    var body: some View { HStack(spacing: 12) { Artwork(item: item); VStack(alignment: .leading, spacing: 5) { Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(2); if !item.subtitle.isEmpty { Text(item.subtitle).font(.system(size: 13)).foregroundStyle(Palette.muted).lineLimit(2) } }.frame(maxWidth: .infinity, alignment: .leading); YLIcon(systemName: "chevron.right", size: 15).foregroundStyle(Palette.muted) }.padding(11).frame(maxWidth: .infinity, alignment: .leading).androidSurface().contentShape(Rectangle()) }
 }
 struct SongRow: View {
     @EnvironmentObject var store: AppStore
@@ -36,7 +36,7 @@ struct SongRow: View {
     }
     var body: some View {
         HStack(spacing: 6) {
-            if let rank { Text("\(rank)").font(.system(size: 12, weight: .bold)).foregroundStyle(rank <= 3 ? Palette.accent : Palette.muted).frame(width: 30).padding(.vertical, 5).background(rank <= 3 ? Palette.tint : Palette.soft, in: RoundedRectangle(cornerRadius: 8)) }
+            if let rank { Text("\(rank)").font(.system(size: 12, weight: .bold)).foregroundStyle(rank <= 3 ? Palette.accent : Palette.muted).frame(width: 30).padding(.vertical, 5).background(rank <= 3 ? Palette.tint : Palette.soft, in: RoundedRectangle(cornerRadius: 8)).accessibilityIdentifier("song-rank-\(rank)") }
             Button(action: play) {
                 HStack(spacing: 10) {
                     if !item.cover.isEmpty { Artwork(item: item, size: 44) }
@@ -95,15 +95,39 @@ struct FrostedArtwork: View {
     var color: Color
     var image: URL?
     var seed: String
+    var alternatives: [URL] = []
     var body: some View {
         GeometryReader { proxy in
             ZStack {
                 RadialGradient(colors: [Color(rgb: 0x7d7b85), color, Color(rgb: 0x14141b)], center: UnitPoint(x: 0.74, y: 0.19), startRadius: 0, endRadius: proxy.size.width * 0.85)
                 ForEach(1...5, id: \.self) { index in Circle().stroke(.white.opacity(0.24), lineWidth: 1.05).frame(width: proxy.size.width * (0.095 + Double(index) * 0.067) * 2).position(x: proxy.size.width * 0.74, y: proxy.size.height * 0.19) }
-                if let image { RemoteImage(url: image) { image in image.resizable().scaledToFill().frame(width: proxy.size.width, height: proxy.size.height).clipped() } placeholder: { Color.clear } }
+                if !alternatives.isEmpty { EntryCover(urls: alternatives).frame(width: proxy.size.width, height: proxy.size.height).clipped() }
+                else if let image { RemoteImage(url: image) { image in image.resizable().scaledToFill().frame(width: proxy.size.width, height: proxy.size.height).clipped() } placeholder: { Color.clear } }
                 LinearGradient(colors: [.clear, Color(rgb: 0x23181a).opacity(0.9)], startPoint: UnitPoint(x: 0.5, y: 0.46), endPoint: .bottom)
             }
-        }.clipped()
+        }.clipped().allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
+private struct EntryCover: View {
+    let urls: [URL]
+    @State private var image: Image?
+    var body: some View {
+        GeometryReader { proxy in
+            if let image { image.resizable().scaledToFill().frame(width: proxy.size.width, height: proxy.size.height).clipped() }
+        }.task(id: urls) {
+            image = nil
+            for url in urls.prefix(6) {
+                guard !Task.isCancelled else { return }
+#if DEBUG
+                if UITestFixtures.active, url.scheme == "fixture" { image = Image(String(url.absoluteString.dropFirst("fixture:".count))); return }
+#endif
+                var request = URLRequest(url: url); request.timeoutInterval = 15
+                if let (data, response) = try? await URLSession.shared.data(for: request),
+                   (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? 0), let bitmap = UIImage(data: data) {
+                    guard !Task.isCancelled else { return }; image = Image(uiImage: bitmap); return
+                }
+            }
+        }.allowsHitTesting(false).accessibilityHidden(true)
     }
 }
 struct ModuleCard: View {
@@ -112,11 +136,13 @@ struct ModuleCard: View {
     var icon: String
     var color: Color
     var image: URL? = nil
+    var height: CGFloat = 96
+    var alternatives: [URL] = []
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            FrostedArtwork(color: color, image: image, seed: title)
+            FrostedArtwork(color: color, image: image, seed: title, alternatives: alternatives)
             VStack(alignment: .leading, spacing: 4) { Text(title).font(.system(size: 16, weight: .bold)).lineLimit(2); if !subtitle.isEmpty { Text(subtitle).font(.system(size: 12)).lineLimit(1) } }.foregroundStyle(.white).shadow(color: .black.opacity(0.8), radius: 3, y: 1).padding(.leading, 12).padding(.trailing, 10).padding(.bottom, 12)
-        }.frame(height: 96).clipShape(RoundedRectangle(cornerRadius: 16)).overlay { RoundedRectangle(cornerRadius: 16).stroke(LinearGradient(colors: [.white.opacity(0.58), .white.opacity(0.18), .white.opacity(0.39)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1) }.contentShape(RoundedRectangle(cornerRadius: 16))
+        }.frame(maxWidth: .infinity).frame(height: height).clipShape(RoundedRectangle(cornerRadius: 16)).overlay { RoundedRectangle(cornerRadius: 16).stroke(LinearGradient(colors: [.white.opacity(0.58), .white.opacity(0.18), .white.opacity(0.39)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1) }.contentShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 struct CatalogCard: View {
@@ -130,7 +156,7 @@ struct CatalogCard: View {
             FrostedArtwork(color: Color(rgb: 0x62466d), image: cover ?? store.artwork(item), seed: item.id)
             VStack(alignment: .leading, spacing: 4) { Text(item.title).font(.system(size: 16, weight: .bold)).lineLimit(2); if !chart { Text(item.raw.string("author", "name")).font(.system(size: 11)).lineLimit(1) } }.foregroundStyle(.white).shadow(color: .black.opacity(0.8), radius: 3, y: 1).padding(16)
             Text(Platform(rawValue: item.source)?.title ?? "").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.ink).padding(.horizontal, 8).padding(.vertical, 5).background(.ultraThinMaterial, in: Capsule()).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(9)
-        }.frame(height: height).clipShape(RoundedRectangle(cornerRadius: 17)).overlay { RoundedRectangle(cornerRadius: 17).stroke(.white.opacity(0.3), lineWidth: 1) }
+        }.frame(maxWidth: .infinity).frame(height: height).clipShape(RoundedRectangle(cornerRadius: 17)).overlay { RoundedRectangle(cornerRadius: 17).stroke(.white.opacity(0.3), lineWidth: 1).allowsHitTesting(false) }.contentShape(RoundedRectangle(cornerRadius: 17))
             .task(id: item.id) { if chart && item.cover.isEmpty, let result = try? await store.catalog("chart-cover", ["source": item.source, "id": item.catalogID]) { cover = result.rows("list").first.flatMap { URL(string: $0.string("img")) } } }
     }
 }

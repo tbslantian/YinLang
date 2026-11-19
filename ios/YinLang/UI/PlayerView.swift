@@ -41,7 +41,6 @@ struct PlayerView: View {
     @AppStorage("player-vinyl") private var vinyl = false
     @State private var lyrics = false
     @State private var fullLyrics = false
-    @State private var rotation = false
     @State private var menu = false
     @State private var sleep = false
     @State private var effects = false
@@ -60,14 +59,37 @@ struct PlayerView: View {
     var body: some View {
         GeometryReader { proxy in
             let compact = proxy.size.height < 560
+            let landscape = proxy.size.width > proxy.size.height
             ZStack {
                 Color(rgb: dark ? 0x211820 : 0xf0e6e1).ignoresSafeArea()
                 if let item = player.current { RemoteImage(url: store.artwork(item)) { image in image.resizable().scaledToFill().frame(width: proxy.size.width, height: proxy.size.height).clipped().blur(radius: 75).opacity(dark ? 0.35 : 0.22) } placeholder: { Color.clear }.ignoresSafeArea().allowsHitTesting(false) }
                 VStack(spacing: 0) {
-                    if !fullLyrics { Button { dismiss() } label: { Capsule().fill(muted.opacity(0.5)).frame(width: 42, height: 4).frame(width: 64, height: 48) }.accessibilityLabel("收起播放器") }
-                    stage.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.horizontal, 20)
-                        .gesture(DragGesture(minimumDistance: 20).onEnded { value in if player.current?.kind != "episode", abs(value.translation.width) >= 42, abs(value.translation.width) > abs(value.translation.height) * 1.25 { withAnimation { lyrics.toggle(); fullLyrics = false } } })
-                    if !fullLyrics { footer(compact: compact).padding(.horizontal, 25).padding(.top, compact ? 3 : 10).padding(.bottom, compact ? 3 : 12) }
+                    if !fullLyrics || landscape { Button { dismiss() } label: { Capsule().fill(muted.opacity(0.5)).frame(width: 42, height: 4).frame(width: 64, height: landscape && compact ? 28 : 48) }.accessibilityLabel("收起播放器") }
+                    if landscape {
+                        HStack(spacing: compact ? 16 : 28) {
+                            artworkStage(maximumEdge: 520)
+                                .frame(width: max(0, (proxy.size.width - (compact ? 48 : 80)) * 0.43))
+                                .accessibilityIdentifier("player-landscape-artwork")
+                            VStack(spacing: 0) {
+                                lyricStage(expandable: false, compact: compact)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .accessibilityIdentifier("player-landscape-lyrics")
+                                footer(compact: compact, landscape: true).padding(.top, compact ? 2 : 10)
+                                    .accessibilityIdentifier("player-landscape-controls")
+                            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }.padding(.horizontal, compact ? 16 : 26).padding(.bottom, compact ? 4 : 12)
+                            .accessibilityIdentifier("player-landscape-layout")
+                    } else {
+                        stage.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.horizontal, 20)
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(DragGesture(minimumDistance: 20).onEnded { value in
+                            guard player.current?.kind != "episode", abs(value.translation.width) >= 42,
+                                  abs(value.translation.width) > abs(value.translation.height) * 1.25 else { return }
+                            withAnimation { lyrics = value.translation.width < 0; fullLyrics = false }
+                        }, including: .all)
+                        .accessibilityIdentifier(lyrics ? "player-lyrics-stage" : "player-artwork-stage")
+                        if !fullLyrics { footer(compact: compact).padding(.horizontal, 25).padding(.top, compact ? 3 : 10).padding(.bottom, compact ? 3 : 12) }
+                    }
                 }.foregroundStyle(ink)
             }
         }.preferredColorScheme(dark ? .dark : .light)
@@ -80,49 +102,57 @@ struct PlayerView: View {
             .sheet(isPresented: $sleep) { PlayerChoice(title: "定时关闭", rows: ["15 分钟","30 分钟","45 分钟","60 分钟","90 分钟","播完当前内容暂停","关闭定时"], selected: "") { value in if value == "播完当前内容暂停" { player.sleepAfterCurrent = true; player.sleepUntil = nil } else { player.setSleep(Int(value.components(separatedBy: " ").first ?? "")) } } }
     }
     @ViewBuilder private var stage: some View {
-        if lyrics {
-            ScrollViewReader { reader in
+        if lyrics { lyricStage() }
+        else { artworkStage() }
+    }
+    private func lyricStage(expandable: Bool = true, compact: Bool = false) -> some View {
+        ScrollViewReader { reader in
                 ScrollView {
-                    VStack(spacing: 24) {
-                        if player.lyrics.isEmpty { Text(player.lyricText.isEmpty ? "暂无歌词" : player.lyricText).font(.system(size: 20)).lineSpacing(14).frame(maxWidth: .infinity).padding(.vertical, 60) }
-                        ForEach(player.lyrics) { line in Button { player.seek(line.time) } label: { Text(line.text.isEmpty ? "♪" : line.text).font(.system(size: activeLine?.id == line.id ? 25 : 21, weight: activeLine?.id == line.id ? .bold : .medium)).foregroundStyle(ink.opacity(activeLine?.id == line.id ? 1 : 0.35)).multilineTextAlignment(.center).frame(maxWidth: .infinity) }.buttonStyle(.plain).id(line.id) }
-                    }.padding(.vertical, 50).padding(.horizontal, 24).contentShape(Rectangle())
-                }.onChange(of: activeLine?.id) { _, id in if let id { withAnimation { reader.scrollTo(id, anchor: .center) } } }.onTapGesture { withAnimation { fullLyrics.toggle() } }
+                    VStack(spacing: compact ? 16 : 24) {
+                        if player.lyrics.isEmpty { Text(player.lyricText.isEmpty ? (player.current?.kind == "episode" ? "有声书暂无歌词" : "暂无歌词") : player.lyricText).font(.system(size: compact ? 16 : 20)).lineSpacing(compact ? 8 : 14).frame(maxWidth: .infinity).padding(.vertical, compact ? 12 : 60) }
+                        ForEach(player.lyrics) { line in Button { player.seek(line.time) } label: { Text(line.text.isEmpty ? "♪" : line.text).font(.system(size: activeLine?.id == line.id ? (compact ? 19 : 25) : (compact ? 16 : 21), weight: activeLine?.id == line.id ? .bold : .medium)).foregroundStyle(ink.opacity(activeLine?.id == line.id ? 1 : 0.35)).multilineTextAlignment(.center).frame(maxWidth: .infinity) }.buttonStyle(.plain).id(line.id) }
+                    }.padding(.vertical, compact ? 12 : 50).padding(.horizontal, compact ? 8 : 24).contentShape(Rectangle())
+                }.onChange(of: activeLine?.id, initial: true) { _, id in if let id { withAnimation { reader.scrollTo(id, anchor: .center) } } }.onTapGesture { if expandable { withAnimation { fullLyrics.toggle() } } }
             }
-        } else {
+    }
+    private func artworkStage(maximumEdge: CGFloat = 350) -> some View {
             GeometryReader { proxy in
-                let edge = max(0, min(350, min(proxy.size.width, proxy.size.height)))
+                let edge = max(0, min(maximumEdge, min(proxy.size.width, proxy.size.height)))
                 if let item = player.current {
                     Group {
                         if vinyl && item.kind != "episode" {
-                            ZStack { Circle().fill(Color(white: 0.06)); ForEach(0..<22) { index in Circle().stroke(.white.opacity(index % 3 == 0 ? 0.12 : 0.05), lineWidth: 1).padding(CGFloat(10 + index * 4)) }; Artwork(item: item, size: edge * 0.43).clipShape(Circle()); Circle().fill(.black).frame(width: 13, height: 13) }.frame(width: edge, height: edge).rotationEffect(.degrees(rotation ? 360 : 0)).animation(player.playing ? .linear(duration: 24).repeatForever(autoreverses: false) : nil, value: rotation).onAppear { rotation = true }.onChange(of: player.playing) { _, playing in rotation = playing }
+                            PlayerVinyl(item: item, edge: edge, playing: player.playing)
                         } else { Artwork(item: item, size: item.kind == "episode" ? edge * 0.77 : edge).shadow(color: .black.opacity(0.25), radius: 8, y: 5) }
-                    }.position(x: proxy.size.width / 2, y: proxy.size.height / 2).onTapGesture { menu = true }
+                    }.position(x: proxy.size.width / 2, y: proxy.size.height / 2).contentShape(Rectangle()).onTapGesture { menu = true }
                 }
             }
-        }
     }
-    private func footer(compact: Bool) -> some View {
-        VStack(spacing: compact ? 3 : 8) {
+    private func footer(compact: Bool, landscape: Bool = false) -> some View {
+        let tight = landscape && compact
+        return VStack(spacing: compact ? 3 : 8) {
             HStack(spacing: 7) {
-                VStack(alignment: .leading, spacing: 6) { Text(player.current?.title ?? "音浪").font(.system(size: 23, weight: .bold)).lineLimit(compact ? 1 : 2); Text(player.current?.subtitle ?? "").font(.system(size: 14)).foregroundStyle(muted).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: tight ? 3 : 6) { Text(player.current?.title ?? "音浪").font(.system(size: tight ? 18 : 23, weight: .bold)).lineLimit(compact ? 1 : 2); Text(player.current?.subtitle ?? "").font(.system(size: tight ? 12 : 14)).foregroundStyle(muted).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading)
                 if let item = player.current, item.kind != "episode" { Button { store.toggleLike(item) } label: { YLIcon(systemName: store.isLiked(item) ? "star.fill" : "star", size: 20).frame(width: 44, height: 48) }.accessibilityLabel("收藏歌曲") }
                 Button { menu = true } label: { YLIcon(systemName: "ellipsis", size: 20).frame(width: 44, height: 48) }.accessibilityLabel("播放器菜单")
             }
-            BufferedProgress(value: player.elapsed, duration: player.duration, buffered: player.buffered, color: accent, change: player.seek).frame(height: 26)
+            BufferedProgress(value: player.elapsed, duration: player.duration, buffered: player.buffered, color: accent, change: player.seek).frame(height: tight ? 20 : 26)
             HStack { Text(clockText(player.elapsed)); Spacer(); Text(clockText(player.duration)) }.font(.system(size: 12).monospacedDigit()).foregroundStyle(muted)
-            Text(player.status).font(.system(size: 12, weight: .semibold)).foregroundStyle(muted).lineLimit(1).frame(maxWidth: .infinity, minHeight: 20)
+            Text(player.status).font(.system(size: tight ? 11 : 12, weight: .semibold)).foregroundStyle(muted).lineLimit(1).frame(maxWidth: .infinity, minHeight: tight ? 16 : 20)
             HStack {
-                Button { player.previous() } label: { YLIcon(systemName: "backward.end.fill", size: compact ? 28 : 33).frame(width: compact ? 50 : 62, height: compact ? 50 : 62) }.accessibilityLabel("上一首")
+                Button { player.previous() } label: { YLIcon(systemName: "backward.end.fill", size: tight ? 24 : compact ? 28 : 33).frame(width: tight ? 44 : compact ? 50 : 62, height: tight ? 44 : compact ? 50 : 62) }.accessibilityLabel("上一首")
                 Spacer()
-                Button { player.toggle() } label: { Group { if player.loading { ProgressView().tint(ink) } else { YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: compact ? 36 : 44) } }.frame(width: compact ? 57 : 70, height: compact ? 57 : 70) }.accessibilityLabel(player.playing ? "暂停" : "播放")
+                Button { player.toggle() } label: { Group { if player.loading { ProgressView().tint(ink) } else { YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: tight ? 30 : compact ? 36 : 44) } }.frame(width: tight ? 44 : compact ? 57 : 70, height: tight ? 44 : compact ? 57 : 70) }.accessibilityLabel(player.playing ? "暂停" : "播放")
                 Spacer()
-                Button { player.next() } label: { YLIcon(systemName: "forward.end.fill", size: compact ? 28 : 33).frame(width: compact ? 50 : 62, height: compact ? 50 : 62) }.accessibilityLabel("下一首")
+                Button { player.next() } label: { YLIcon(systemName: "forward.end.fill", size: tight ? 24 : compact ? 28 : 33).frame(width: tight ? 44 : compact ? 50 : 62, height: tight ? 44 : compact ? 50 : 62) }.accessibilityLabel("下一首")
             }.padding(.horizontal, 24)
             if !compact { SystemVolume().tint(accent).frame(height: 28).padding(.horizontal, 10) }
             HStack(spacing: 0) {
                 if player.current?.kind == "episode" { tool("gobackward.15", "后退15秒") { player.seek(player.elapsed - 15) }; tool("goforward.30", "前进30秒") { player.seek(player.elapsed + 30) } }
-                else { tool("quote.bubble", "显示歌词") { withAnimation { lyrics.toggle() } }; tool(player.mode.icon, player.mode.title) { let modes = PlayMode.allCases; if let index = modes.firstIndex(of: player.mode) { player.mode = modes[(index + 1) % modes.count] } }.onLongPressGesture { chooseMode = true } }
+                else {
+                    if landscape { tool(vinyl ? "photo" : "opticaldisc", vinyl ? "显示封面" : "显示旋转唱片") { vinyl.toggle() } }
+                    else { tool("quote.bubble", "显示歌词") { withAnimation { lyrics.toggle() } } }
+                    tool(player.mode.icon, player.mode.title) { let modes = PlayMode.allCases; if let index = modes.firstIndex(of: player.mode) { player.mode = modes[(index + 1) % modes.count] } }.onLongPressGesture { chooseMode = true }
+                }
                 tool(dark ? "sun.max" : "moon", "播放器明暗") { dark.toggle() }
                 tool("timer", "定时关闭") { sleep = true }
                 tool("airplayaudio", "投送") { cast = true }
@@ -131,6 +161,22 @@ struct PlayerView: View {
         }.buttonStyle(.plain)
     }
     private func tool(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View { Button(action: action) { YLIcon(systemName: icon, size: 22).frame(maxWidth: .infinity).frame(height: 44) }.accessibilityLabel(label) }
+}
+private struct PlayerVinyl: View {
+    let item: MediaItem
+    let edge: CGFloat
+    let playing: Bool
+    @State private var rotating = false
+    var body: some View {
+        ZStack {
+            Circle().fill(Color(white: 0.06))
+            ForEach(0..<22) { index in Circle().stroke(.white.opacity(index % 3 == 0 ? 0.12 : 0.05), lineWidth: 1).padding(CGFloat(10 + index * 4)) }
+            Artwork(item: item, size: edge * 0.43).clipShape(Circle())
+            Circle().fill(.black).frame(width: 13, height: 13)
+        }.frame(width: edge, height: edge).rotationEffect(.degrees(rotating ? 360 : 0))
+            .animation(playing ? .linear(duration: 24).repeatForever(autoreverses: false) : nil, value: rotating)
+            .onAppear { rotating = playing }.onChange(of: playing) { _, value in rotating = value }
+    }
 }
 struct BufferedProgress: View {
     var value: Double
@@ -221,8 +267,51 @@ struct QueueView: View {
     @Environment(\.dismiss) var dismiss
     var body: some View {
         NavigationStack { AndroidList {
-            ForEach(Array(player.queue.enumerated()), id: \.offset) { position, item in HStack { SongRow(item: item, remove: { player.remove(position) }) { player.play(player.queue, at: position) }; if position == player.index { YLIcon(systemName: "waveform").foregroundStyle(Palette.accent) } } }
+            ForEach(Array(player.queue.enumerated()), id: \.offset) { position, item in QueueSwipeRow(item: item, position: position) }
 
         }.androidPage("播放队列（\(player.queue.count)）") { Button("完成") { dismiss() }.font(.system(size: 14, weight: .bold)) } }.presentationDetents([.medium, .large]).presentationCornerRadius(30).presentationDragIndicator(.visible)
     }
+}
+
+private struct QueueSwipeRow: View {
+    @EnvironmentObject private var player: Player
+    let item: MediaItem
+    let position: Int
+    @State private var offset: CGFloat = 0
+    @State private var dragOrigin: CGFloat = 0
+    @State private var horizontal: Bool?
+    private let actionWidth: CGFloat = 88
+    var body: some View {
+        HStack(spacing: 8) {
+            SongRow(item: item, rank: position + 1, remove: remove) { player.play(player.queue, at: position) }
+            if position == player.index { YLIcon(systemName: "waveform").foregroundStyle(Palette.accent).padding(.trailing, 8).accessibilityLabel("正在播放") }
+        }.androidSurface().offset(x: offset)
+            .background(alignment: .trailing) {
+                Button(action: remove) {
+                    VStack(spacing: 5) { YLIcon(systemName: "trash", size: 20); Text("移除").font(.system(size: 13, weight: .semibold)) }
+                        .foregroundStyle(.white).frame(width: actionWidth).frame(maxHeight: .infinity).background(Color.red).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityLabel("从队列移除 " + item.title).accessibilityIdentifier("queue-remove-\(position)")
+                    .opacity(offset < 0 ? 1 : 0).allowsHitTesting(offset < 0).accessibilityHidden(offset >= 0)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 16)).contentShape(Rectangle())
+            // AndroidList is a ScrollView; native List swipeActions do not apply.
+            .simultaneousGesture(DragGesture(minimumDistance: 18).onChanged { value in
+                if horizontal == nil {
+                    horizontal = abs(value.translation.width) > abs(value.translation.height) * 1.25
+                    dragOrigin = offset
+                }
+                guard horizontal == true else { return }
+                offset = min(0, max(-actionWidth, dragOrigin + value.translation.width))
+            }.onEnded { value in
+                defer { horizontal = nil }
+                guard horizontal == true else { return }
+                withAnimation(.easeOut(duration: 0.2)) { offset = dragOrigin + value.translation.width < -actionWidth / 2 ? -actionWidth : 0 }
+            })
+            .onChange(of: item.id) { _, _ in reset() }
+            .onChange(of: player.queue.count) { _, _ in reset() }
+            .accessibilityIdentifier("queue-row-\(position)")
+            .accessibilityAction(named: Text("从队列移除"), remove)
+    }
+    private func reset() { offset = 0; horizontal = nil; dragOrigin = 0 }
+    private func remove() { reset(); player.remove(position) }
 }

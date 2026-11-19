@@ -3,6 +3,53 @@ import Network
 @testable import YinLang
 
 final class CoreTests: XCTestCase {
+    func testBookSourceSelectionRestoresLastSourceAndFallsBackWhenUnavailable() {
+        let first: JSONObject = ["id":"one", "_plugin":"plugin-a"]
+        let last: JSONObject = ["id":"two", "_plugin":"plugin-a"]
+        let duplicate: JSONObject = ["id":"two", "_plugin":"plugin-b"]
+        let all = [first, last, duplicate]
+        XCTAssertEqual(BookSourceSelection.restore(current: "", saved: "", sources: all), BookSourceSelection.key(first))
+        XCTAssertEqual(BookSourceSelection.restore(current: "", saved: BookSourceSelection.key(last), sources: all), BookSourceSelection.key(last))
+        XCTAssertEqual(BookSourceSelection.restore(current: "", saved: BookSourceSelection.key(duplicate), sources: all), BookSourceSelection.key(duplicate))
+        XCTAssertEqual(BookSourceSelection.restore(current: "", saved: BookSourceSelection.key(last), sources: [first]), BookSourceSelection.key(first))
+        XCTAssertEqual(BookSourceSelection.restore(current: BookSourceSelection.key(last), saved: BookSourceSelection.key(first), sources: all), BookSourceSelection.key(last))
+        XCTAssertEqual(BookSourceSelection.restore(current: "", saved: BookSourceSelection.key(last), sources: []), "")
+    }
+    func testCatalogColumnsKeepPhoneCardsReadableAndAdaptTabletWindows() {
+        XCTAssertEqual(CatalogLayout.columns(preferred: 0, width: 390, tablet: false), 2)
+        XCTAssertEqual(CatalogLayout.columns(preferred: 4, width: 390, tablet: false), 2)
+        XCTAssertEqual(CatalogLayout.columns(preferred: 4, width: 844, tablet: false), 2)
+        XCTAssertEqual(CatalogLayout.columns(preferred: 0, width: 1024, tablet: true), 4)
+        XCTAssertEqual(CatalogLayout.columns(preferred: 0, width: 1440, tablet: true), 4)
+        XCTAssertEqual(CatalogLayout.columns(preferred: 4, width: 500, tablet: true), 3)
+        XCTAssertEqual(CatalogLayout.columns(preferred: 0, width: 500, tablet: true), 2)
+        XCTAssertEqual(CatalogLayout.columns(preferred: 4, width: 280, tablet: true), 1)
+        XCTAssertEqual(CatalogLayout.columns(preferred: 1, width: 1024, tablet: true), 1)
+        for tablet in [false, true] {
+            for width in [CGFloat(320), 390, 500, 768, 1024, 1440] {
+                let count = CatalogLayout.columns(preferred: 4, width: width, tablet: tablet)
+                let cardWidth = (width - 32 - CGFloat(count - 1) * 8) / CGFloat(count)
+                XCTAssertGreaterThanOrEqual(cardWidth, 140)
+            }
+        }
+    }
+    @MainActor func testJavaScriptDispatchIgnoresPromiseReturnAndKeepsMessageResults() async throws {
+        let runtime = ScriptRuntime(scope: "dispatch-regression"); defer { runtime.close() }
+        try await runtime.start("""
+        const dispatch = SoundShelfRuntime.execute;
+        SoundShelfRuntime.execute = (...args) => {
+          setTimeout(() => dispatch(...args), 30);
+          return Promise.resolve(() => 'not bridgeable');
+        };
+        """)
+        let value = try await runtime.call("Promise.resolve({url:'https://example.com/audio.mp3', headers:{Referer:'https://example.com'}})") as? JSONObject
+        XCTAssertEqual(value?.string("url"), "https://example.com/audio.mp3")
+        XCTAssertEqual(value?.object("headers").string("Referer"), "https://example.com")
+        do { _ = try await runtime.call("Promise.reject(Error('expected plugin error'))"); XCTFail("Expected plugin failure") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("expected plugin error")) }
+        let next = try await runtime.call("Promise.resolve(42)") as? Int
+        XCTAssertEqual(next, 42)
+    }
     @MainActor func testBundledFivePlatformBoardsUseAPIIdentifiers() async throws {
         let url = try XCTUnwrap(Bundle.main.url(forResource: "catalog.bundle", withExtension: "js", subdirectory: "Runtime"))
         let runtime = ScriptRuntime(scope: "chart-regression"); defer { runtime.close() }

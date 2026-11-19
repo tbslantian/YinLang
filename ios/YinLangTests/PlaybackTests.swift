@@ -72,6 +72,27 @@ private final class PlaybackServer: @unchecked Sendable {
 }
 
 final class PlaybackTests: XCTestCase {
+    @MainActor func testRemovingQueueEntryBeforeCurrentKeepsCurrentSongAndProgress() {
+        let player = Player()
+        let songs = (1...4).map { MediaItem(["id": "queue-test-\($0)", "name": "Song \($0)"], source: "wy") }
+        player.queue = songs; player.index = 2; player.elapsed = 42; player.duration = 180; player.playing = true
+        player.remove(0)
+        XCTAssertEqual(player.queue.count, 3); XCTAssertEqual(player.index, 1)
+        XCTAssertEqual(player.current?.id, songs[2].id); XCTAssertEqual(player.elapsed, 42); XCTAssertTrue(player.playing)
+        player.remove(2)
+        XCTAssertEqual(player.queue.count, 2); XCTAssertEqual(player.current?.id, songs[2].id); XCTAssertEqual(player.elapsed, 42)
+    }
+    @MainActor func testRemovingOnlyQueueEntryClearsPlaybackState() {
+        let player = Player()
+        let item = MediaItem(["id": UUID().uuidString, "name": "Queue cleanup"], source: "test", kind: "test")
+        defer { UserDefaults.standard.removeObject(forKey: "progress:" + item.id) }
+        player.queue = [item]; player.elapsed = 42; player.duration = 180; player.buffered = 90; player.playing = true; player.loading = true
+        player.lyricText = "[00:00]Test"; player.lyrics = LyricLine.parse(player.lyricText)
+        player.remove(0)
+        XCTAssertTrue(player.queue.isEmpty); XCTAssertNil(player.current); XCTAssertEqual(player.index, 0)
+        XCTAssertFalse(player.playing); XCTAssertFalse(player.loading); XCTAssertEqual(player.elapsed, 0); XCTAssertEqual(player.duration, 0); XCTAssertEqual(player.buffered, 0)
+        XCTAssertTrue(player.lyrics.isEmpty); XCTAssertTrue(player.lyricText.isEmpty)
+    }
     func testMusicSourceMetadataUsesHeaderAndPreservesImportIdentity() throws {
         let script = "\u{FEFF}/**\n * @name 我的测试音源\n * @version 2.3.4\n * @author 作者\n */\nlx.on('request', () => 'https://example.com/a');"
         let plugin = try PluginArchive.read(Data(script.utf8), name: "lxmusic.js", address: "https://example.com/source", books: false)
@@ -86,19 +107,41 @@ final class PlaybackTests: XCTestCase {
     }
     @MainActor func testOnlineLXAudioActuallyAdvancesPlayback() async throws { try await exercisePlayback(library: false) }
     @MainActor func testNavidromeHTTPAudioActuallyAdvancesPlayback() async throws { try await exercisePlayback(library: true) }
+    @MainActor func testBookThenOnlineMusicActuallyAdvancesPlayback() async throws { try await exercisePlayback(library: false, switchFromBook: true) }
+    @MainActor func testBookThenNavidromeMusicActuallyAdvancesPlayback() async throws { try await exercisePlayback(library: true, switchFromBook: true) }
+    @MainActor func testEmptyCacheFallsBackToOnlinePlayback() async throws { try await exercisePlayback(library: false, cachedFile: Data()) }
+    @MainActor func testCorruptCacheRetriesOnlineWithoutShowingAnError() async throws {
+        try await exercisePlayback(library: false, cachedFile: Data("RIFF".utf8) + Data(repeating: 0, count: 128))
+    }
+    @MainActor func testCorruptNavidromeCacheRetriesOnline() async throws {
+        try await exercisePlayback(library: true, cachedFile: Data("RIFF".utf8) + Data(repeating: 0, count: 128))
+    }
 
-    @MainActor private func exercisePlayback(library: Bool) async throws {
+    @MainActor private func exercisePlayback(library: Bool, cachedFile: Data? = nil, switchFromBook: Bool = false) async throws {
         let server = try PlaybackServer(); try await server.start(); defer { server.stop() }
         let store = AppStore(), player = Player(), defaults = UserDefaults.standard
         let oldPlugins = store.plugins
-        let keys = ["nav-url", "nav-user", "nav-bitrate", "nav-bitrate-wifi", "nav-bitrate-mobile", "nav-format", "quality", "music-cache"]
+        let oldDownloads = store.downloads
+        let oldBook = store.nowBook
+        var seededCache: URL?
+        var bookProgressKey: String?
+        var bookSpeedKey: String?
+        let keys = ["nav-url", "nav-user", "nav-bitrate", "nav-bitrate-wifi", "nav-bitrate-mobile", "nav-format", "quality", "music-cache", "book-cache"]
         let previous = Dictionary(uniqueKeysWithValues: keys.map { ($0, defaults.object(forKey: $0)) })
         let recent = try? Data(contentsOf: Disk.support.appendingPathComponent("recent-music.json"))
+        let lastBook = try? Data(contentsOf: Disk.support.appendingPathComponent("last-book.json"))
         let effects = AudioEffects.shared.config
         defer {
             player.pause()
+            if let seededCache { try? FileManager.default.removeItem(at: seededCache) }
             for plugin in store.plugins where !oldPlugins.contains(where: { $0.id == plugin.id }) { store.invalidate(plugin.id) }
             store.plugins = oldPlugins
+            store.downloads = oldDownloads
+            store.nowBook = oldBook
+            if let bookProgressKey { defaults.removeObject(forKey: bookProgressKey) }
+            if let bookSpeedKey { defaults.removeObject(forKey: bookSpeedKey) }
+            if let lastBook { try? lastBook.write(to: Disk.support.appendingPathComponent("last-book.json")) }
+            else { try? FileManager.default.removeItem(at: Disk.support.appendingPathComponent("last-book.json")) }
             for key in keys { if let value = previous[key] ?? nil { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) } }
             if let recent { try? recent.write(to: Disk.support.appendingPathComponent("recent-music.json")) }
             else if FileManager.default.fileExists(atPath: Disk.support.appendingPathComponent("recent-music.json").path) {
@@ -109,7 +152,23 @@ final class PlaybackTests: XCTestCase {
         defaults.removeObject(forKey: "nav-url"); defaults.removeObject(forKey: "nav-user")
         defaults.set("flac", forKey: "quality"); defaults.set(0, forKey: "music-cache")
         AudioEffects.shared.config.enabled = false
-        store.plugins = []; player.attach(store)
+        store.plugins = []; store.downloads = []; store.message = nil; player.attach(store)
+        if switchFromBook {
+            defaults.set(0, forKey: "book-cache")
+            let id = UUID().uuidString
+            bookSpeedKey = "speed:" + id
+            let script = "registerSource({id:'book-fixture', name:'Book fixture', audio: () => ({url:'\(server.base)/audio.wav', headers:{'User-Agent':'Fixture',Cookie:'fixture=1'}})});"
+            store.plugins.append(Plugin(id: id, name: "Book fixture", version: "1", script: script, address: "", books: true))
+            let episode = MediaItem(["id": UUID().uuidString, "url": "chapter-1", "name": "Book PCM", "_plugin": id, "_book": id], source: "book-fixture", kind: "episode")
+            bookProgressKey = "progress:" + episode.id
+            player.play([episode])
+            for _ in 0..<200 {
+                if player.elapsed >= 0.8 || store.message != nil { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            XCTAssertNil(store.message, player.status); XCTAssertGreaterThan(player.elapsed, 0.5, player.status)
+            player.speed = 1.5
+        }
         let item: MediaItem
         if library {
             defaults.set("0", forKey: "nav-bitrate"); defaults.set("0", forKey: "nav-bitrate-wifi"); defaults.set("0", forKey: "nav-bitrate-mobile")
@@ -131,8 +190,12 @@ final class PlaybackTests: XCTestCase {
             lx.send('inited',{sources:{wy:{qualitys:['flac']}}});
             """
             try await store.install(Data(script.utf8), name: "lx.js", address: "", books: false)
-            XCTAssertEqual(store.plugins.first?.name, "Playback Fixture")
+            XCTAssertEqual(store.plugins.first(where: { !$0.books })?.name, "Playback Fixture")
             item = MediaItem(["id": UUID().uuidString, "name": "LX PCM", "singer": "fixture", "lrc": "[00:00.00]Fixture"], source: "wy")
+        }
+        if let cachedFile {
+            let url = Disk.directory(Disk.cache.appendingPathComponent("music")).appendingPathComponent(Disk.hash(store.cacheKey(item)))
+            try cachedFile.write(to: url); seededCache = url
         }
         player.play([item])
         for _ in 0..<200 {
@@ -143,6 +206,8 @@ final class PlaybackTests: XCTestCase {
         XCTAssertFalse(player.loading, player.status)
         XCTAssertGreaterThan(player.elapsed, 0.5, "AVPlayer clock did not advance: " + player.status)
         XCTAssertGreaterThan(player.duration, 1)
+        if switchFromBook { XCTAssertEqual(player.current?.id, item.id); XCTAssertEqual(player.speed, 1) }
+        if let seededCache, let cachedFile { XCTAssertEqual(try Data(contentsOf: seededCache), cachedFile, "Playback recovery must preserve the existing cache") }
         XCTAssertEqual(AVAudioSession.sharedInstance().category, .playback)
         XCTAssertEqual(AVAudioSession.sharedInstance().routeSharingPolicy, .longFormAudio)
         XCTAssertFalse(AVAudioSession.sharedInstance().categoryOptions.contains(.allowAirPlay))

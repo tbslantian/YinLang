@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import CryptoKit
+import AVFoundation
 
 enum Disk {
     static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
@@ -36,32 +37,50 @@ enum Keychain {
 
 actor MediaCache {
     static let shared = MediaCache()
-    private var pending: [String: Task<URL?, Never>] = [:]
+    private var pending: [String: (id: UUID, task: Task<URL?, Never>)] = [:]
     func cached(_ key: String, books: Bool) -> URL? {
         let url = folder(books).appendingPathComponent(Disk.hash(key))
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard Self.hasAudioData(url) else { return nil }
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
         return url
     }
     private func folder(_ books: Bool) -> URL { Disk.directory(Disk.cache.appendingPathComponent(books ? "books" : "music")) }
+    private static func hasAudioData(_ url: URL) -> Bool {
+        guard let info = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), info.isRegularFile == true, (info.fileSize ?? 0) >= 32,
+              let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let prefix = try? handle.read(upToCount: 512), !prefix.isEmpty else { return false }
+        let text = String(decoding: prefix, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return !["<", "{", "[", "#extm3u"].contains(where: { text.hasPrefix($0) })
+    }
     func store(_ key: String, url: URL, headers: [String: String], books: Bool, limitMB: Int) async -> URL? {
         guard limitMB > 0, !url.pathExtension.lowercased().contains("m3u8") else { return nil }
         if let found = cached(key, books: books) { return found }
-        if let task = pending[key] { return await task.value }
+        let pendingKey = (books ? "books:" : "music:") + key
+        if let entry = pending[pendingKey] { return await entry.task.value }
         let destination = folder(books).appendingPathComponent(Disk.hash(key))
+        // Preserve an unreadable existing entry until the user clears the cache.
+        guard !FileManager.default.fileExists(atPath: destination.path) else { return nil }
+        let id = UUID()
         let task = Task<URL?, Never> {
             do {
                 var request = URLRequest(url: url); request.allHTTPHeaderFields = headers; request.timeoutInterval = 90
                 let (temp, response) = try await URLSession.shared.download(for: request)
-                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                defer { try? FileManager.default.removeItem(at: temp) }
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200,
                       !((http.mimeType ?? "").contains("text") || (http.mimeType ?? "").contains("json") || (http.mimeType ?? "").contains("mpegurl")) else { return nil }
                 let size = (try temp.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
-                guard size > 0, size <= limitMB * 1_048_576 else { try? FileManager.default.removeItem(at: temp); return nil }
+                guard size > 0, size <= limitMB * 1_048_576, Self.hasAudioData(temp),
+                      response.expectedContentLength <= 0 || Int64(size) == response.expectedContentLength,
+                      (try? await AVURLAsset(url: temp).load(.isPlayable)) == true else { return nil }
+                try Task.checkCancellation()
                 try FileManager.default.moveItem(at: temp, to: destination); return destination
             } catch { return nil }
         }
-        pending[key] = task
-        let result = await task.value; pending.removeValue(forKey: key); trim(books: books, limitMB: limitMB); return result
+        pending[pendingKey] = (id, task)
+        let result = await task.value
+        if pending[pendingKey]?.id == id { pending.removeValue(forKey: pendingKey) }
+        trim(books: books, limitMB: limitMB); return result
     }
     func trim(books: Bool, limitMB: Int) {
         let files = (try? FileManager.default.contentsOfDirectory(at: folder(books), includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])) ?? []
@@ -73,5 +92,8 @@ actor MediaCache {
         let files = (try? FileManager.default.contentsOfDirectory(at: folder(books), includingPropertiesForKeys: [.fileSizeKey])) ?? []
         return files.reduce(Int64(0)) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
     }
-    func clear(books: Bool) { let url = folder(books); try? FileManager.default.removeItem(at: url) }
+    func clear(books: Bool) {
+        for key in Array(pending.keys) where key.hasPrefix(books ? "books:" : "music:") { pending.removeValue(forKey: key)?.task.cancel() }
+        let url = folder(books); try? FileManager.default.removeItem(at: url)
+    }
 }

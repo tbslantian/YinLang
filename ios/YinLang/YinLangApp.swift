@@ -42,14 +42,18 @@ struct RootView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var player: Player
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            NavigationStack {
 #if DEBUG
             if UITestFixtures.active { UITestScreen() } else { HomeView() }
 #else
             HomeView()
 #endif
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) { if player.current != nil { MiniPlayer() } }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Reserve real layout space outside the navigation stack, including
+            // pushed pages and changes to loading / one- or two-line lyrics.
+            if player.current != nil { MiniPlayer().fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("mini-player") }
+        }.background { AndroidBackground() }
         .fullScreenCover(isPresented: $player.showPlayer) { PlayerView().environmentObject(store).environmentObject(player) }
         .sheet(isPresented: Binding(get: { player.showQueue && !player.showPlayer }, set: { player.showQueue = $0 })) { QueueView().environmentObject(store).environmentObject(player) }
         .alert("音浪", isPresented: Binding(get: { store.message != nil }, set: { if !$0 { store.message = nil } })) { Button("好") { store.message = nil } } message: { Text(store.message ?? "") }

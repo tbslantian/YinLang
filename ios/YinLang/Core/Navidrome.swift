@@ -30,6 +30,25 @@ struct Navidrome {
         try await get("search3", [.init(name: "query", value: query), .init(name: "songCount", value: "50"), .init(name: "songOffset", value: "\(offset)"), .init(name: "albumCount", value: "0"), .init(name: "artistCount", value: "0")]).object("searchResult3").rows("song")
     }
     func playlist(_ id: String) async throws -> JSONObject { try await get("getPlaylist", [.init(name: "id", value: id)]).object("playlist") }
+    func songCount() async throws -> Int? {
+        let status = try await get("getScanStatus").object("scanStatus")
+        guard let count = Int(status.string("count")), count >= 0 else { return nil }
+        return count
+    }
+    func entryCoverIDs(playlists: Bool) async throws -> [String] {
+        let rows: [JSONObject]
+        if playlists {
+            let lists = try await get("getPlaylists").object("playlists").rows("playlist")
+            if lists.contains(where: { !$0.string("coverArt").isEmpty }) { rows = lists }
+            else if let first = lists.first(where: { (($0["songCount"] as? NSNumber)?.intValue ?? 0) > 0 }), !first.string("id").isEmpty {
+                rows = try await playlist(first.string("id")).rows("entry")
+            } else { rows = [] }
+        } else {
+            rows = try await get("getAlbumList2", [.init(name: "type", value: "newest"), .init(name: "size", value: "8"), .init(name: "offset", value: "0")]).object("albumList2").rows("album")
+        }
+        var seen: Set<String> = []
+        return Array(rows.map { $0.string("coverArt") }.filter { !$0.isEmpty && seen.insert($0).inserted }.prefix(6))
+    }
     func canEdit(_ playlist: JSONObject) -> Bool {
         if let readOnly = playlist["readonly"] as? Bool { return !readOnly }
         let owner = playlist.string("owner").trimmingCharacters(in: .whitespacesAndNewlines)

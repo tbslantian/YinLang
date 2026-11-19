@@ -85,7 +85,7 @@ private struct AndroidPage: ViewModifier {
 extension View {
     func androidPage(_ title: String, category: String = "音浪", root: Bool = false) -> some View { modifier(AndroidPage(title: title, category: category, root: root, trailing: AnyView(EmptyView()))) }
     func androidPage<T: View>(_ title: String, category: String = "音浪", root: Bool = false, @ViewBuilder trailing: () -> T) -> some View { modifier(AndroidPage(title: title, category: category, root: root, trailing: AnyView(trailing()))) }
-    func androidSurface(radius: CGFloat = 16) -> some View { background(Palette.paper, in: RoundedRectangle(cornerRadius: radius)).overlay { RoundedRectangle(cornerRadius: radius).stroke(Palette.ink.opacity(0.04), lineWidth: 1) } }
+    func androidSurface(radius: CGFloat = 16) -> some View { background(Palette.paper, in: RoundedRectangle(cornerRadius: radius)).overlay { RoundedRectangle(cornerRadius: radius).stroke(Palette.ink.opacity(0.04), lineWidth: 1).allowsHitTesting(false) } }
 }
 
 struct AndroidForm<Content: View>: View {
@@ -138,7 +138,22 @@ struct AndroidRow: View {
 struct AndroidChips: View {
     var names: [(String, String)]
     @Binding var selection: String
-    var body: some View { ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 8) { ForEach(names, id: \.0) { value, title in Button { selection = value } label: { Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(selection == value ? Palette.onAccent : Palette.muted).padding(.horizontal, 16).frame(minHeight: 40).background(selection == value ? Palette.accent : Palette.paper, in: Capsule()) }.buttonStyle(.plain) } } } }
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(names, id: \.0) { value, title in
+                    Button { selection = value } label: {
+                        Text(title).font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(selection == value ? Palette.onAccent : Palette.muted)
+                            .padding(.horizontal, 16).frame(minWidth: 58, minHeight: 44)
+                            .background(selection == value ? Palette.accent : Palette.paper, in: Capsule())
+                            .contentShape(Capsule())
+                    }.buttonStyle(.plain).accessibilityIdentifier("chip-" + value)
+                        .accessibilityAddTraits(selection == value ? [.isSelected] : [])
+                }
+            }.padding(.vertical, 2)
+        }.frame(height: 48).zIndex(1).accessibilityIdentifier("android-chips")
+    }
 }
 
 private struct AndroidAppearanceRevision: EnvironmentKey { static let defaultValue = "" }
@@ -171,6 +186,7 @@ struct AndroidPreferenceRow: View {
 }
 struct DiscoveryHero: View {
     var books = false
+    var showsArrow = true
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .bottomLeading) {
@@ -182,7 +198,7 @@ struct DiscoveryHero: View {
                     Palette.accent
                     Image("android-library_discovery_record").resizable().scaledToFit().frame(width: 112, height: 112).offset(x: 12, y: 12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).accessibilityHidden(true)
                 }
-                VStack(alignment: .leading, spacing: 4) { Text("发现").font(.system(size: 26, weight: .bold)); HStack { Text(books ? "听书 · 广播 · 播客" : "探索音乐库").font(.system(size: 13)); Spacer(minLength: 4); YLIcon(systemName: "arrow.right", size: 19).rotationEffect(.degrees(-45)) } }.foregroundStyle(books ? .white : Palette.onAccent).padding(.horizontal, 16).padding(.bottom, 22)
+                VStack(alignment: .leading, spacing: 4) { Text("发现").font(.system(size: 26, weight: .bold)); HStack { Text(books ? "听书 · 广播 · 播客" : "探索音乐库").font(.system(size: 13)); Spacer(minLength: 4); if showsArrow { YLIcon(systemName: "arrow.right", size: 19).rotationEffect(.degrees(-45)) } } }.foregroundStyle(books ? .white : Palette.onAccent).padding(.horizontal, 16).padding(.bottom, 22)
             }.frame(width: proxy.size.width, height: proxy.size.height).clipShape(RoundedRectangle(cornerRadius: 18))
         }.contentShape(RoundedRectangle(cornerRadius: 18))
             .accessibilityElement(children: .ignore)
@@ -192,7 +208,8 @@ struct DiscoveryHero: View {
 struct LibraryShortcut: View {
     var title: String
     var icon: String
-    var body: some View { HStack(spacing: 8) { YLIcon(systemName: icon, size: 20).foregroundStyle(Palette.accent).frame(width: 22, height: 32); Text(title).font(.system(size: 14, weight: .bold)).foregroundStyle(Palette.ink); Spacer(minLength: 0) }.padding(.horizontal, 10).frame(minHeight: 56).androidSurface(radius: 18) }
+    var height: CGFloat = 56
+    var body: some View { HStack(spacing: 8) { YLIcon(systemName: icon, size: 20).foregroundStyle(Palette.accent).frame(width: 22, height: 32); Text(title).font(.system(size: 14, weight: .bold)).foregroundStyle(Palette.ink); Spacer(minLength: 0) }.padding(.horizontal, 10).frame(maxWidth: .infinity).frame(minHeight: height).androidSurface(radius: 18).contentShape(RoundedRectangle(cornerRadius: 18)) }
 }
 struct BookTile: View {
     @EnvironmentObject var store: AppStore
@@ -212,7 +229,7 @@ struct BookGrid: View {
     @State private var width: CGFloat = 350
     @Environment(\.dynamicTypeSize) private var typeSize
     private var count: Int { width >= 568 ? 4 : typeSize.isAccessibilitySize ? 2 : 3 }
-    var body: some View { LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: count), spacing: 18) { ForEach(rows) { book in NavigationLink { BookDetailView(book: book) } label: { BookTile(book: book) }.buttonStyle(.plain) } }.background { GeometryReader { proxy in Color.clear.onAppear { width = proxy.size.width }.onChange(of: proxy.size.width) { _, value in width = value } } } }
+    var body: some View { LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: count), spacing: 18) { ForEach(rows) { book in NavigationLink { BookDetailView(book: book) } label: { BookTile(book: book) }.buttonStyle(.plain).accessibilityIdentifier("book-tile-" + book.id) } }.background { GeometryReader { proxy in Color.clear.onAppear { width = proxy.size.width }.onChange(of: proxy.size.width) { _, value in width = value } } } }
 }
 struct AndroidChoice: View {
     var title: String

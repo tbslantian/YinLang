@@ -68,7 +68,7 @@ final class AppStore: ObservableObject {
     func invalidate(_ id: String) { runtimes.removeValue(forKey: id)?.close(); starts.removeValue(forKey: id)?.cancel() }
     func catalog(_ operation: String, _ args: JSONObject, refresh: Bool = false) async throws -> JSONObject {
 #if DEBUG
-        if UITestFixtures.active { return UITestFixtures.catalog(operation) }
+        if UITestFixtures.active { return UITestFixtures.catalog(operation, args: args) }
 #endif
         let key = "catalog-" + Disk.hash(operation + jsonText(args)) + ".json"
         let file = Disk.directory(Disk.cache.appendingPathComponent("catalog")).appendingPathComponent(key)
@@ -139,7 +139,7 @@ final class AppStore: ObservableObject {
     }
     func bookSources() async throws -> [JSONObject] {
 #if DEBUG
-        if UITestFixtures.active { return [UITestFixtures.source] }
+        if UITestFixtures.active { return UITestFixtures.bookSources }
 #endif
         await installBundledBooks()
         var sources: [JSONObject] = []

@@ -30,6 +30,8 @@ struct BookBrowseView: View {
     var search: Bool
     @State private var sources: [JSONObject] = []
     @State private var sourceID = ""
+    @AppStorage("book-discovery-last-source") private var lastDiscoverySource = ""
+    @AppStorage("book-search-last-source") private var lastSearchSource = ""
     @State private var menus: [JSONObject] = []
     @State private var category = ""
     @State private var menuIndex = "0"
@@ -43,21 +45,21 @@ struct BookBrowseView: View {
     @State private var page = 1
     @State private var more = false
     @State private var generation = UUID()
-    private var source: JSONObject { sources.first { $0.string("id") == sourceID } ?? [:] }
+    private var source: JSONObject { sources.first { BookSourceSelection.key($0) == sourceID } ?? [:] }
     private var tabs: [JSONObject] { guard let index = Int(menuIndex), menus.indices.contains(index) else { return [] }; return menus[index].rows("tabs") }
     var body: some View {
         AndroidForm {
             if search { AndroidSearch(text: $query, hint: "书名或作者") { Task { await reload() } } }
             HStack {
-                AndroidChoice(title: "来源", selection: $sourceID, options: sources.map { ($0.string("id"), $0.string("group") + " · " + $0.string("name")) }).onChange(of: sourceID) { _, _ in Task { await switchSource() } }
+                AndroidChoice(title: "来源", selection: Binding(get: { sourceID }, set: { sourceID = $0; generation = UUID() }), options: sources.map { (BookSourceSelection.key($0), $0.string("group") + " · " + $0.string("name")) }).accessibilityValue(source.string("name")).accessibilityIdentifier("book-source-picker")
                 Spacer()
                 Button { grid.toggle() } label: { YLIcon(systemName: grid ? "list.bullet" : "square.grid.2x2").frame(width: 44, height: 44) }.buttonStyle(.plain).accessibilityLabel("切换网格列表")
             }
             if !search && !menus.isEmpty {
                 if menus.contains(where: { !$0.rows("tabs").isEmpty }) {
-                    AndroidChips(names: menus.enumerated().map { (String($0.offset), $0.element.string("title", "name")) }, selection: $menuIndex).onChange(of: menuIndex) { _, _ in category = tabs.first?.string("url") ?? "" }
-                    AndroidChips(names: tabs.map { ($0.string("url"), $0.string("title", "name")) }, selection: $category).onChange(of: category) { _, _ in Task { await reload() } }
-                } else { AndroidChips(names: menus.map { ($0.string("url"), $0.string("title", "name")) }, selection: $category).onChange(of: category) { _, _ in Task { await reload() } } }
+                    AndroidChips(names: menus.enumerated().map { (String($0.offset), $0.element.string("title", "name")) }, selection: Binding(get: { menuIndex }, set: { menuIndex = $0; changeCategory(tabs.first?.string("url") ?? "") }))
+                    AndroidChips(names: tabs.map { ($0.string("url"), $0.string("title", "name")) }, selection: Binding(get: { category }, set: changeCategory))
+                } else { AndroidChips(names: menus.map { ($0.string("url"), $0.string("title", "name")) }, selection: Binding(get: { category }, set: changeCategory)) }
             }
             if !error.isEmpty { ErrorPanel(text: error) { Task { await reload() } } }
             if grid { BookGrid(rows: rows) }
@@ -67,14 +69,30 @@ struct BookBrowseView: View {
             if rows.isEmpty && !loading && error.isEmpty { ErrorPanel(text: search ? "输入书名或作者开始搜索" : "该分类暂无内容") }
         }.androidPage(search ? "搜索有声书" : "发现", category: "有声书") { Button { Task { await reload() } } label: { YLIcon(systemName: "arrow.clockwise").frame(width: 44, height: 44) }.accessibilityLabel("刷新列表") }
             .refreshable { await reload() }
-            .task { do { sources = try await store.bookSources().filter { $0[search ? "search" : "discover"] as? Bool == true }; sourceID = sources.first?.string("id") ?? ""; await switchSource() } catch { self.error = error.localizedDescription } }
+            .task {
+                do {
+                    let available = try await store.bookSources().filter { $0[search ? "search" : "discover"] as? Bool == true }
+                    guard !Task.isCancelled else { return }
+                    sources = available
+                    sourceID = BookSourceSelection.restore(current: sourceID, saved: search ? lastSearchSource : lastDiscoverySource, sources: available)
+                } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+            }
+            .task(id: sourceID) {
+                guard !Task.isCancelled else { return }
+                guard !sourceID.isEmpty else { generation = UUID(); rows = []; menus = []; category = ""; more = false; loading = false; return }
+                if search { lastSearchSource = sourceID } else { lastDiscoverySource = sourceID }
+                await switchSource()
+            }
     }
+    private func changeCategory(_ value: String) { category = value; generation = UUID(); Task { await reload() } }
     private func switchSource() async {
-        generation = UUID(); loading = false; rows = []; menus = []; category = ""; nextPage = ""; seenPages = []; error = ""
+        let token = UUID(), selected = sourceID, activeSource = source
+        generation = token; loading = false; rows = []; menus = []; category = ""; nextPage = ""; seenPages = []; more = false; error = ""
         guard !sourceID.isEmpty else { return }
         if !search {
             do {
-                let result = try await store.bookCall(sourceID, pluginID: source.string("_plugin"), action: "categoryMenus", args: [])
+                let result = try await store.bookCall(activeSource.string("id"), pluginID: activeSource.string("_plugin"), action: "categoryMenus", args: [])
+                guard !Task.isCancelled, generation == token, sourceID == selected else { return }
                 func flatten(_ value: Any) -> [JSONObject] {
                     if let rows = value as? [Any] { return rows.flatMap(flatten) }
                     guard let row = value as? JSONObject else { return [] }
@@ -84,27 +102,38 @@ struct BookBrowseView: View {
                 let original = result as? [JSONObject] ?? []
                 menus = original.contains(where: { !$0.rows("tabs").isEmpty }) ? original : flatten(result)
                 menuIndex = "0"; category = tabs.first?.string("url") ?? menus.first?.string("url") ?? ""
-            } catch { self.error = error.localizedDescription }
+            } catch { guard !Task.isCancelled, generation == token, sourceID == selected else { return }; self.error = error.localizedDescription }
         }
+        guard !Task.isCancelled, generation == token, sourceID == selected else { return }
         await reload()
     }
-    private func reload() async { generation = UUID(); loading = false; rows = []; page = 1; nextPage = ""; seenPages = []; more = false; await load() }
+    private func reload() async { guard !Task.isCancelled else { return }; generation = UUID(); loading = false; rows = []; page = 1; nextPage = ""; seenPages = []; more = false; await load() }
     private func load(next: Bool = false) async {
-        guard !loading, !sourceID.isEmpty, !(search && query.isEmpty), search || !category.isEmpty else { return }
-        let token = generation; let selected = sourceID; let pluginID = source.string("_plugin")
+        guard !Task.isCancelled, !loading, !sourceID.isEmpty, !(search && query.isEmpty), search || !category.isEmpty else { return }
+        let token = generation; let selected = sourceID; let pluginID = source.string("_plugin"), rawID = source.string("id")
         loading = true; error = ""
         do {
             let cursor = next ? nextPage : category
             if !search && seenPages.contains(cursor) { more = false; loading = false; return }
             let requested = next ? page + 1 : 1
-            let result = try await store.bookCall(selected, pluginID: pluginID, action: search ? "search" : "categoryPage", args: search ? [query, requested] : [cursor]) as? JSONObject ?? [:]
-            guard token == generation else { return }
-            let items = result.rows("books").map { row in var row = row; row["_plugin"] = pluginID; return MediaItem(row, source: selected, kind: "book") }
+            let result = try await store.bookCall(rawID, pluginID: pluginID, action: search ? "search" : "categoryPage", args: search ? [query, requested] : [cursor]) as? JSONObject ?? [:]
+            guard token == generation, sourceID == selected, !Task.isCancelled else { return }
+            let items = result.rows("books").map { row in var row = row; row["_plugin"] = pluginID; return MediaItem(row, source: rawID, kind: "book") }
             let ids = Set(rows.map(\.id)); let fresh = items.filter { !ids.contains($0.id) }; rows += fresh; page = requested
             if !search { seenPages.insert(cursor); nextPage = result.string("nextPageUrl", "nextUrl") }
             more = !fresh.isEmpty && (search ? (result["totalPage"] as? Int ?? 1) > requested : !nextPage.isEmpty && !seenPages.contains(nextPage))
-        } catch { if token == generation { self.error = error.localizedDescription } }
+        } catch { if token == generation, sourceID == selected, !Task.isCancelled { self.error = error.localizedDescription } }
         if token == generation { loading = false }
+    }
+}
+
+enum BookSourceSelection {
+    static func key(_ source: JSONObject) -> String { jsonText([source.string("_plugin"), source.string("id")]) }
+    static func restore(current: String, saved: String, sources: [JSONObject]) -> String {
+        let keys = sources.map(key)
+        if keys.contains(current) { return current }
+        if keys.contains(saved) { return saved }
+        return keys.first ?? ""
     }
 }
 
@@ -126,7 +155,7 @@ struct BookDetailView: View {
             if !description.isEmpty { Text(description).font(.system(size: 14)).foregroundStyle(Palette.muted).padding(.vertical, 8) }
             HStack(spacing: 12) { if !episodes.isEmpty { Button("从第一章播放") { player.play(displayed) }.buttonStyle(AndroidButtonStyle(primary: true)); Button("继续收听") { let saved = store.nowBook; if let saved, saved.raw.string("_book") == book.id { player.resumeBook(saved) } else { player.play(episodes) } }.buttonStyle(AndroidButtonStyle()) }; Spacer(); Button { reverse.toggle() } label: { YLIcon(systemName: "arrow.up.arrow.down").frame(width: 44, height: 44) }.accessibilityLabel("章节排序") }
             AndroidSearch(text: $query, hint: "搜索章节")
-            ForEach(Array(displayed.enumerated()), id: \.offset) { index, item in Button { player.play(displayed, at: index) } label: { HStack { Text("\(index + 1)  " + item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).padding(.vertical, 10); Spacer(); YLIcon(systemName: "play.fill", size: 17).foregroundStyle(Palette.accent).frame(width: 28, height: 36) }.padding(.leading, 12).padding(.trailing, 10).padding(.vertical, 8).androidSurface() }.buttonStyle(.plain) }
+            ForEach(Array(displayed.enumerated()), id: \.offset) { index, item in Button { player.play(displayed, at: index) } label: { HStack { Text("\(index + 1)  " + item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).padding(.vertical, 10); Spacer(); YLIcon(systemName: "play.fill", size: 17).foregroundStyle(Palette.accent).frame(width: 28, height: 36) }.padding(.leading, 12).padding(.trailing, 10).padding(.vertical, 8).androidSurface() }.buttonStyle(.plain).accessibilityIdentifier("book-chapter-\(index)") }
             if loading { ProgressView().frame(maxWidth: .infinity) }; if !error.isEmpty { ErrorPanel(text: error) { Task { await load() } } }
         }.androidPage(book.title, category: "有声书 / 章节").task { if episodes.isEmpty { await load() } }.refreshable { await load() }
     }

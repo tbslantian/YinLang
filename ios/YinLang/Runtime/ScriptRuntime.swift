@@ -15,6 +15,11 @@ final class ScriptRuntime: NSObject, WKUIDelegate, WKNavigationDelegate, WKScrip
     private var networkTasks: [URLSessionDataTask] = []
     private var probes: [WebProbe] = []
     var update: ((String, String) -> Void)?
+    // Results arrive through Native.ready/result, never evaluateJavaScript's
+    // return-value conversion (which cannot bridge Promises or functions).
+    static func nativeCommand(_ script: String) -> String {
+        "(() => {\n" + script + "\n; return null; })()"
+    }
     init(scope: String) {
         self.scope = scope; super.init()
         let config = WKWebViewConfiguration()
@@ -39,7 +44,7 @@ final class ScriptRuntime: NSObject, WKUIDelegate, WKNavigationDelegate, WKScrip
                     try? await Task.sleep(nanoseconds: timeout * 1_000_000_000)
                     guard !Task.isCancelled else { return }; self?.finish(id, .failure(AppFailure.message("音源响应超时")))
                 }
-                web.evaluateJavaScript("SoundShelfRuntime.execute(\(id),\(quote(expression)))") { [weak self] _, error in
+                web.evaluateJavaScript(Self.nativeCommand("SoundShelfRuntime.execute(\(id),\(quote(expression)))")) { [weak self] _, error in
                     if let error { self?.finish(id, .failure(error)) }
                 }
             }
@@ -68,7 +73,7 @@ final class ScriptRuntime: NSObject, WKUIDelegate, WKNavigationDelegate, WKScrip
         """
         webView.evaluateJavaScript("navigator.userAgent") { [weak self] value, _ in
             guard let self else { return }; self.actualAgent = value as? String ?? self.actualAgent
-            webView.evaluateJavaScript(bridge + "\n" + host + "\nSoundShelfRuntime.initialize(" + quote(self.scripts) + ");") { [weak self] _, error in
+            webView.evaluateJavaScript(Self.nativeCommand(bridge + "\n" + host + "\nSoundShelfRuntime.initialize(" + quote(self.scripts) + ");")) { [weak self] _, error in
                 if let error { self?.ready?.resume(throwing: error); self?.ready = nil }
             }
         }
@@ -89,7 +94,7 @@ final class ScriptRuntime: NSObject, WKUIDelegate, WKNavigationDelegate, WKScrip
         case "networkAsync":
             guard args.count == 3, let id = args[0] as? Int else { return }
             network(args[1] as? String ?? "", args[2] as? String ?? "{}") { [weak self] raw in
-                self?.web.evaluateJavaScript("networkComplete(\(id),\(quote(raw)))", completionHandler: nil)
+                self?.web.evaluateJavaScript(Self.nativeCommand("networkComplete(\(id),\(quote(raw)))"), completionHandler: nil)
             }
         case "updateAlert": if args.count == 2 { update?(args[0] as? String ?? "", args[1] as? String ?? "") }
         default: break

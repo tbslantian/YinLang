@@ -26,6 +26,7 @@ final class Player: ObservableObject {
     private let audio = AVPlayer()
     private var clock: Timer?
     private var endObserver: NSObjectProtocol?
+    private var failureObserver: NSObjectProtocol?
     private var interruption: NSObjectProtocol?
     private var routeChange: NSObjectProtocol?
     private var itemObservation: NSKeyValueObservation?
@@ -36,7 +37,6 @@ final class Player: ObservableObject {
     private var store: AppStore?
     private var lastSavedSecond = -1
     private var wasPlayingBeforeInterruption = false
-    private var pendingSeek: Double?
     private var remotePolling = false
     private var lastRemotePoll = Date.distantPast
     var current: MediaItem? { queue.indices.contains(index) ? queue[index] : nil }
@@ -97,17 +97,21 @@ final class Player: ObservableObject {
             }
         }
     }
-    private func start() {
+    private func start(useLocal: Bool = true, resumeAt: Double? = nil) {
         guard let current, let store else { return }
-        load?.cancel(); artworkTask?.cancel(); audio.pause(); audio.replaceCurrentItem(with: nil)
+        load?.cancel(); artworkTask?.cancel(); itemObservation = nil
+        if let failureObserver { NotificationCenter.default.removeObserver(failureObserver); self.failureObserver = nil }
+        audio.pause(); audio.replaceCurrentItem(with: nil)
         generation = UUID(); let token = generation
         loading = true; playing = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = "正在解析音频…"
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        if current.kind == "episode" { speed = UserDefaults.standard.float(forKey: "speed:" + current.raw.string("_book")); if speed < 0.25 { speed = 1 } }
-        else { speed = 1 }
+        if useLocal {
+            if current.kind == "episode" { speed = UserDefaults.standard.float(forKey: "speed:" + current.raw.string("_book")); if speed < 0.25 { speed = 1 } }
+            else { speed = 1 }
+        }
         load = Task {
             do {
-                let (url, headers, source) = try await store.resolve(current)
+                let (url, headers, source) = try await store.resolve(current, useLocal: useLocal)
                 try Task.checkCancellation(); guard generation == token else { return }
                 if let receiver = dlna.current {
                     try await dlna.cast(current, resolved: url, headers: headers, to: receiver)
@@ -122,18 +126,20 @@ final class Player: ObservableObject {
                 try Task.checkCancellation(); guard generation == token else { return }
                 itemObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
                     Task { @MainActor in
-                        guard let self, self.generation == token else { return }
-                        if item.status == .failed { self.loading = false; self.playing = false; self.status = item.error?.localizedDescription ?? "音频格式无法播放"; self.store?.message = self.status }
+                        guard let self, self.generation == token, self.audio.currentItem === item else { return }
+                        if item.status == .failed { self.handleFailure(item, url: url, token: token, retryLocal: useLocal) }
                         else if item.status == .readyToPlay { self.loading = false }
                     }
                 }
+                failureObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+                    Task { @MainActor in self?.handleFailure(item, url: url, token: token, retryLocal: useLocal) }
+                }
                 audio.replaceCurrentItem(with: item); status = source
-                if let position = pendingSeek { seek(position); pendingSeek = nil }
                 if current.kind == "episode" {
                     let previous = UserDefaults.standard.double(forKey: "progress:" + current.id)
-                    if previous > 0 { seek(previous) }
+                    if let resumeAt { seek(resumeAt) } else if previous > 0 { seek(previous) }
                     store.nowBook = current; Disk.save(Optional(current), "last-book.json")
-                }
+                } else if let resumeAt { seek(resumeAt) }
                 resume(); updateNowPlaying()
                 artworkTask = Task { [weak self] in
                     guard let self, let imageURL = store.artwork(current), let (data, _) = try? await URLSession.shared.data(from: imageURL), let image = UIImage(data: data), self.generation == token else { return }
@@ -144,7 +150,7 @@ final class Player: ObservableObject {
                     let text = await store.lyrics(current)
                     guard generation == token else { return }; lyricText = text; lyrics = LyricLine.parse(text)
                 }
-                if !url.isFileURL {
+                if !url.isFileURL && useLocal {
                     let limit = UserDefaults.standard.object(forKey: current.kind == "episode" ? "book-cache" : "music-cache") as? Int ?? 512
                     let actualQuality = current.kind == "song" && current.source != "library" ? source.components(separatedBy: " · ").last : nil
                     let cached = await MediaCache.shared.store(store.cacheKey(current, quality: actualQuality), url: url, headers: headers, books: current.kind == "episode", limitMB: limit)
@@ -153,6 +159,21 @@ final class Player: ObservableObject {
             } catch {
                 guard generation == token, !Task.isCancelled else { return }; loading = false; status = error.localizedDescription; store.message = status
             }
+        }
+    }
+    private func handleFailure(_ item: AVPlayerItem, url: URL, token: UUID, retryLocal: Bool) {
+        guard generation == token, audio.currentItem === item else { return }
+        if url.isFileURL && retryLocal {
+            let position = elapsed
+            // Detach first: status KVO and end-failure notifications can both fire.
+            itemObservation = nil; audio.pause(); audio.replaceCurrentItem(with: nil)
+            loading = true; playing = false; status = "本地音频失效，正在重新获取…"
+            load?.cancel()
+            // Re-resolve once without reading, removing or rewriting local files.
+            load = nil
+            start(useLocal: false, resumeAt: position)
+        } else {
+            loading = false; playing = false; status = item.error?.localizedDescription ?? "音频格式无法播放"; store?.message = status
         }
     }
     func toggle() { playing ? pause() : resume() }
@@ -186,11 +207,20 @@ final class Player: ObservableObject {
         do { let (url, headers, _) = try await store.resolve(current); try await dlna.cast(current, resolved: url, headers: headers, to: device); audio.pause(); casting = true; playing = true; status = "DLNA · " + device.name }
         catch { store.message = error.localizedDescription }
     }
-    func stopCasting() async { let position = elapsed; await dlna.stop(); casting = false; pendingSeek = position; start() }
+    func stopCasting() async { let position = elapsed; await dlna.stop(); casting = false; start(resumeAt: position) }
     func next(manual: Bool = true) { guard let next = mode.nextIndex(current: index, count: queue.count, manual: manual) else { pause(); return }; saveProgress(); index = next; start() }
     func previous() { if elapsed > 3 { seek(0) } else if !queue.isEmpty { saveProgress(); index = (index - 1 + queue.count) % queue.count; start() } }
     func insertNext(_ item: MediaItem) { if queue.isEmpty { play([item]) } else { queue.insert(item, at: min(index + 1, queue.count)) } }
-    func remove(_ position: Int) { guard queue.indices.contains(position) else { return }; if position == index { pause(); queue.remove(at: position); if !queue.isEmpty { index = min(index, queue.count - 1); start() } } else { queue.remove(at: position); if position < index { index -= 1 } } }
+    func remove(_ position: Int) {
+        guard queue.indices.contains(position) else { return }
+        if position != index { queue.remove(at: position); if position < index { index -= 1 }; return }
+        pause(); queue.remove(at: position)
+        if !queue.isEmpty { index = min(index, queue.count - 1); start(); return }
+        load?.cancel(); artworkTask?.cancel(); bookResumeTask?.cancel(); generation = UUID(); itemObservation = nil
+        if let failureObserver { NotificationCenter.default.removeObserver(failureObserver); self.failureObserver = nil }
+        audio.replaceCurrentItem(with: nil); index = 0; loading = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = "选择一首喜欢的音乐"
+        updateNowPlaying()
+    }
     func setSleep(_ minutes: Int?) { sleepUntil = minutes.map { Date().addingTimeInterval(Double($0 * 60)) }; sleepAfterCurrent = false }
     private func update(_ time: CMTime) {
         if let receiver = dlna.current {

@@ -12,14 +12,25 @@ enum UITestFixtures {
     static var books: [JSONObject] { (1...8).map { ["bookUrl":"book-\($0)","name":["三体","平凡的世界","长安十二时辰","听见故事"][($0-1)%4],"author":"有声书精选","artist":"有声书精选","coverUrl":"fixture:home_books_light","_plugin":"fixture-book","_source":"fixture-source"] as JSONObject } }
     static var book: MediaItem { MediaItem(books[0], source:"fixture-source", kind:"book") }
     static var source: JSONObject { ["id":"fixture-source","name":"有声书精选","group":"听书","search":true,"discover":true,"_plugin":"fixture-book","config":[["key":"example","label":"显示名称","type":"text","default":"音浪"]]] }
+    static var bookSources: [JSONObject] {
+        guard ProcessInfo.processInfo.arguments.contains("-ui-multiple-book-sources") else { return [source] }
+        var second = source; second["id"] = "fixture-source-two"; second["name"] = "备用听书源"
+        return [source, second]
+    }
     @MainActor static func prepare(_ store: AppStore, _ player: Player) {
         guard active else { return }
         UserDefaults.standard.set("https://fixture.yinlang.invalid", forKey:"nav-url"); UserDefaults.standard.set("fixture", forKey:"nav-user"); UserDefaults.standard.set("私人音乐库", forKey:"nav-alias")
         store.plugins = [Plugin(id:"fixture-lx",name:"测试音源",version:"1.2.3",script:"/**\n * @name 测试音源\n */",address:"",books:false),Plugin(id:"fixture-book",name:"随身听书公开源合集",version:"5.7",script:"",address:"",books:true)]
         store.liked = songs.prefix(4).map { MediaItem($0, source:"wy") }; store.followed = playlists.map { MediaItem($0, kind:"playlist") }; store.bookshelf = books.prefix(4).map { MediaItem($0, source:"fixture-source", kind:"book") }; store.message = nil
-        if ["player","lyrics","queue","song-menu"].contains(screen) { player.queue = store.liked; player.duration = 245; player.elapsed = 62; player.buffered = 160; player.status = "FLAC · 24 bit · 96 kHz"; player.lyricText = songs[0].string("lrc"); player.lyrics = LyricLine.parse(player.lyricText) }
+        if ["player","lyrics","queue","song-menu"].contains(screen) || ProcessInfo.processInfo.arguments.contains("-ui-mini-player") { player.queue = store.liked; player.duration = 245; player.elapsed = 62; player.buffered = 160; player.status = "FLAC · 24 bit · 96 kHz"; player.lyricText = songs[0].string("lrc"); player.lyrics = LyricLine.parse(player.lyricText) }
+        if ProcessInfo.processInfo.arguments.contains("-ui-mini-loading") { player.loading = true }
     }
-    static func catalog(_ operation: String) -> JSONObject {
+    static func catalog(_ operation: String, args: JSONObject = [:]) -> JSONObject {
+        if operation == "list", ProcessInfo.processInfo.arguments.contains("-ui-bottom-audit") {
+            let page = args["page"] as? Int ?? 1
+            let items = songs.map { row -> JSONObject in var item = row; item["id"] = "page-\(page)-" + row.string("id"); return item }
+            return ["list":items,"more":page == 1]
+        }
         switch operation {
         case "charts": return ["list":[["id":"wy__19723756","bangid":"19723756","name":"飙升榜","source":"wy","img":"fixture:home_music_light"],["id":"wy__3778678","bangid":"3778678","name":"热歌榜","source":"wy","img":"fixture:home_music_dark"]]]
         case "lists": return ["list":playlists,"more":false]
@@ -30,6 +41,7 @@ enum UITestFixtures {
     }
     static func nav(_ command: String) -> JSONObject {
         switch command {
+        case "getScanStatus": return ["scanStatus":["count":8,"scanning":false]]
         case "getPlaylists": return ["playlists":["playlist":playlists]]
         case "getPlaylist": var row = playlists[0]; row["entry"] = songs; return ["playlist":row]
         case "getRandomSongs": return ["randomSongs":["song":songs]]

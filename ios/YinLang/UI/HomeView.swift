@@ -15,15 +15,16 @@ struct HomeView: View {
     var body: some View {
         GeometryReader { proxy in
             let width = max(0, proxy.size.width - 32)
+            let cardHeight: CGFloat? = proxy.size.width >= 600 ? max(240, min(420, proxy.size.height * (resolved == "classic" && scheme == .dark ? 0.5 : 0.35))) : nil
             ScrollView {
                 VStack(spacing: 10) {
                     if resolved != "classic" {
                         Text(resolved == "gallery" ? "一首歌，一段故事。" : "此刻，听点喜欢的。").font(.system(size: 13)).foregroundStyle(Palette.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 8)
-                        entry(books: false, width: width)
-                        entry(books: true, width: width).padding(.top, 4)
+                        entry(books: false, width: width, height: cardHeight)
+                        entry(books: true, width: width, height: cardHeight).padding(.top, 4)
                     } else if scheme == .dark {
-                        HStack(spacing: 10) { entry(books: false, width: (width - 10) / 2); entry(books: true, width: (width - 10) / 2) }
-                    } else { entry(books: false, width: width); entry(books: true, width: width) }
+                        HStack(spacing: 10) { entry(books: false, width: (width - 10) / 2, height: cardHeight); entry(books: true, width: (width - 10) / 2, height: cardHeight) }
+                    } else { entry(books: false, width: width, height: cardHeight); entry(books: true, width: width, height: cardHeight) }
                     NavigationLink { DownloadsView() } label: { AndroidRow(title: "本机下载", icon: "arrow.down.circle") }.padding(.top, 4)
                 }.padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 22)
             }
@@ -31,8 +32,8 @@ struct HomeView: View {
             NavigationLink { SettingsView() } label: { Image("android-ic_settings_cupertino").renderingMode(.template).resizable().scaledToFit().frame(width: 28, height: 28).foregroundStyle(Palette.ink).frame(width: 48, height: 48) }.accessibilityLabel("总设置")
         }.buttonStyle(.plain)
     }
-    private func entry(books: Bool, width: CGFloat) -> some View {
-        NavigationLink { if books { BooksView() } else { MusicView() } } label: { HomeEntry(books: books, template: resolved, width: width) }.buttonStyle(.plain)
+    private func entry(books: Bool, width: CGFloat, height: CGFloat?) -> some View {
+        NavigationLink { if books { BooksView() } else { MusicView() } } label: { HomeEntry(books: books, template: resolved, width: width, preferredHeight: height) }.buttonStyle(.plain).accessibilityIdentifier(books ? "home-books-card" : "home-music-card")
     }
 }
 
@@ -41,9 +42,10 @@ struct HomeEntry: View {
     let books: Bool
     let template: String
     let width: CGFloat
+    var preferredHeight: CGFloat? = nil
     private var dark: Bool { scheme == .dark }
     private var gallery: Bool { template == "gallery" }
-    private var height: CGFloat { template != "classic" ? max(200, min(232, width * 0.58)) : dark ? max(164, min(238, width + 22)) : max(154, min(214, width * 0.46)) }
+    private var height: CGFloat { preferredHeight ?? (template != "classic" ? max(200, min(232, width * 0.58)) : dark ? max(164, min(238, width + 22)) : max(154, min(214, width * 0.46))) }
     private var colors: [Color] {
         let values: [UInt32]
         if gallery { values = books ? (dark ? [0x3b2f2b,0x312a29] : [0xf2e8dc,0xeee0cd]) : (dark ? [0x243c34,0x24332f] : [0xe9eee7,0xdce7db]) }
@@ -75,32 +77,52 @@ struct MusicView: View {
     @EnvironmentObject private var store: AppStore
     @State private var chartsCover: URL?
     @State private var listsCover: URL?
+    @State private var localCovers: [URL] = []
+    @State private var libraryCovers: [URL] = []
     private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                NavigationLink { CatalogView(mode: "search") } label: { SearchEntry(title: "搜索在线音乐或资料库") }
-                SectionTitle(title: "在线音乐")
-                LazyVGrid(columns: columns, spacing: 8) {
-                    NavigationLink { CatalogView(mode: "charts") } label: { ModuleCard(title: "在线排行榜", subtitle: "五个平台的榜单", icon: "chart.bar", color: Color(rgb: 0x843c42), image: chartsCover) }
-                    NavigationLink { CatalogView(mode: "lists") } label: { ModuleCard(title: "在线歌单", subtitle: "按来源和分类浏览", icon: "square.stack", color: Color(rgb: 0x77501d), image: listsCover) }
-                    NavigationLink { SavedView(title: "关注的歌单", type: "followed") } label: { ModuleCard(title: "关注的歌单", subtitle: "", icon: "bookmark", color: Color(rgb: 0x245b5b), image: store.followed.first.flatMap { store.artwork($0) }) }
-                    NavigationLink { SavedView(title: "我喜欢的音乐", type: "liked") } label: { ModuleCard(title: "我喜欢的音乐", subtitle: "", icon: "heart", color: Color(rgb: 0x62466d), image: store.liked.first.flatMap { store.artwork($0) }) }
-                }
-                SectionTitle(title: "个人音乐库")
-                LazyVGrid(columns: columns, spacing: 8) {
-                    NavigationLink { LibraryListView(kind: "playlists", title: "本地歌单") } label: { ModuleCard(title: "本地歌单", subtitle: "Navidrome 歌单", icon: "music.note.list", color: Color(rgb: 0x2d4e76)) }
-                    NavigationLink { LibraryView() } label: { ModuleCard(title: "音乐库", subtitle: "浏览 Navidrome", icon: "opticaldisc", color: Color(rgb: 0x405665)) }
-                }
-                let recent: [MediaItem] = Disk.read("recent-music.json", fallback: [])
-                if let item = recent.first, item.kind == "song" { SectionTitle(title: "继续听歌"); RecentSong(item: item) }
-                NavigationLink { PluginSettingsView(books: false) } label: { AndroidRow(title: "音乐设置", subtitle: "LX 音源与优先音质", icon: "slider.horizontal.3") }.padding(.top, 6)
-            }.padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 22)
+        GeometryReader { proxy in
+            let cardHeight: CGFloat = proxy.size.width >= 600 ? max(144, min(224, (proxy.size.width - 40) / 2 * 0.43)) : 96
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    NavigationLink { CatalogView(mode: "search") } label: { SearchEntry(title: "搜索在线音乐或资料库") }
+                    SectionTitle(title: "在线音乐")
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        NavigationLink { CatalogView(mode: "charts") } label: { ModuleCard(title: "在线排行榜", subtitle: "五个平台的榜单", icon: "chart.bar", color: Color(rgb: 0x843c42), image: chartsCover, height: cardHeight) }.accessibilityIdentifier("music-charts-card")
+                        NavigationLink { CatalogView(mode: "lists") } label: { ModuleCard(title: "在线歌单", subtitle: "按来源和分类浏览", icon: "square.stack", color: Color(rgb: 0x77501d), image: listsCover, height: cardHeight) }.accessibilityIdentifier("music-playlists-card")
+                        NavigationLink { SavedView(title: "关注的歌单", type: "followed") } label: { ModuleCard(title: "关注的歌单", subtitle: "", icon: "bookmark", color: Color(rgb: 0x245b5b), image: store.followed.first.flatMap { store.artwork($0) }, height: cardHeight) }.accessibilityIdentifier("music-followed-card")
+                        NavigationLink { SavedView(title: "我喜欢的音乐", type: "liked") } label: { ModuleCard(title: "我喜欢的音乐", subtitle: "", icon: "heart", color: Color(rgb: 0x62466d), image: store.liked.first.flatMap { store.artwork($0) }, height: cardHeight) }.accessibilityIdentifier("music-liked-card")
+                    }
+                    SectionTitle(title: "个人音乐库")
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        NavigationLink { LibraryListView(kind: "playlists", title: "本地歌单") } label: { ModuleCard(title: "本地歌单", subtitle: "Navidrome 歌单", icon: "music.note.list", color: Color(rgb: 0x2d4e76), height: cardHeight, alternatives: localCovers) }.accessibilityIdentifier("music-local-card")
+                        NavigationLink { LibraryView() } label: { ModuleCard(title: "音乐库", subtitle: "浏览 Navidrome", icon: "opticaldisc", color: Color(rgb: 0x405665), height: cardHeight, alternatives: libraryCovers) }.accessibilityIdentifier("music-library-card")
+                    }
+                    let recent: [MediaItem] = Disk.read("recent-music.json", fallback: [])
+                    if let item = recent.first, item.kind == "song" { SectionTitle(title: "继续听歌"); RecentSong(item: item) }
+                    NavigationLink { PluginSettingsView(books: false) } label: { AndroidRow(title: "音乐设置", subtitle: "LX 音源与优先音质", icon: "slider.horizontal.3") }.padding(.top, 6)
+                }.padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 22)
+            }
         }.androidPage("发现音乐", category: "音乐").buttonStyle(.plain).task {
             if listsCover == nil, let rows = try? await store.catalog("lists", ["source": "wy", "sort": "@hot", "page": 1]).rows("list"), let first = rows.first { listsCover = store.artwork(MediaItem(first)) }
             if chartsCover == nil, let row = try? await store.catalog("charts", ["source": "wy"]).rows("list").first,
                let cover = try? await store.catalog("chart-cover", ["source": "wy", "id": MediaItem(row, kind: "chart").catalogID]) { chartsCover = cover.rows("list").first.flatMap { URL(string: $0.string("img")) } }
-        }
+        }.task(id: store.connectionRevision) { await loadLibraryCovers() }
+    }
+    private func loadLibraryCovers() async {
+        localCovers = []; libraryCovers = []
+        guard let nav = store.nav else { return }
+        let cacheName = "nav-entry-covers-" + nav.identity + ".json"
+        var saved: [String: [String]] = Disk.read(cacheName, fallback: [:])
+        localCovers = (saved["playlists"] ?? []).compactMap { URL(string: nav.cover($0, size: 320)) }
+        libraryCovers = (saved["albums"] ?? []).compactMap { URL(string: nav.cover($0, size: 320)) }
+        async let lists = try? nav.entryCoverIDs(playlists: true)
+        async let albums = try? nav.entryCoverIDs(playlists: false)
+        let results = await (lists, albums)
+        guard !Task.isCancelled, store.nav?.identity == nav.identity else { return }
+        if let ids = results.0 { saved["playlists"] = ids; localCovers = ids.compactMap { URL(string: nav.cover($0, size: 320)) } }
+        if let ids = results.1 { saved["albums"] = ids; libraryCovers = ids.compactMap { URL(string: nav.cover($0, size: 320)) } }
+        Disk.save(saved, cacheName)
     }
 }
 struct SearchEntry: View {
