@@ -77,11 +77,29 @@ struct HomeTemplatePicker: View {
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 7) { Text((selection == option.0 ? "✓  " : "") + option.1).font(.system(size: 17, weight: .bold)); Text(descriptions[index]).font(.system(size: 12)).foregroundStyle(Palette.muted) }.frame(maxWidth: .infinity, alignment: .leading)
                         if option.0 == "auto" { YLIcon(systemName: "arrow.clockwise", size: 27).frame(width: 40, height: 44) }
-                        else { VStack(spacing: 5) { HomeEntry(books: false, template: option.0, width: 320).scaleEffect(0.3375, anchor: .topLeading).frame(width: 108, height: 38).clipped(); HomeEntry(books: true, template: option.0, width: 320).scaleEffect(0.3375, anchor: .topLeading).frame(width: 108, height: 38).clipped() }.frame(width: 108, height: 82) }
+                        else { HomeTemplatePreview(template: option.0) }
                     }.foregroundStyle(selection == option.0 ? Palette.accent : Palette.ink).padding(14).background(selection == option.0 ? Palette.tint : Palette.paper, in: RoundedRectangle(cornerRadius: 18))
                 }.buttonStyle(.plain)
             }
         }.androidPage("首页模板", category: "") }.presentationDetents([.large]).presentationCornerRadius(30).presentationDragIndicator(.visible)
+    }
+}
+private struct HomeTemplatePreview: View {
+    var template: String
+    var body: some View {
+        VStack(spacing: 5) { tile(false); tile(true) }.frame(width: 108, height: 82).accessibilityHidden(true)
+    }
+    private func tile(_ books: Bool) -> some View {
+        ZStack(alignment: .leading) {
+            Color(rgb: template == "gallery" ? (books ? 0xeee0cd : 0xdce7db) : (books ? 0x854256 : 0x204966))
+            if template == "classic" {
+                Image(books ? "home_books_light" : "home_music_light").resizable().scaledToFill().frame(width: 108, height: 38).clipped()
+                LinearGradient(colors: [.black.opacity(0.6), .black.opacity(0.06)], startPoint: .leading, endPoint: .trailing)
+            } else {
+                Image("android-home-\(template)-\(books ? "books" : "music")-light").resizable().scaledToFit().frame(width: 44, height: 38).frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            Text(books ? "有声书" : "音乐").font(.system(size: 10, weight: .bold)).foregroundStyle(template == "gallery" ? Color(rgb: 0x354638) : .white).padding(.leading, 9)
+        }.frame(width: 108, height: 38).clipShape(RoundedRectangle(cornerRadius: 7))
     }
 }
 struct CacheSettingsView: View {
