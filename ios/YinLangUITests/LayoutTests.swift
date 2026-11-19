@@ -43,7 +43,7 @@ final class LayoutTests: XCTestCase {
             }
             if screen == "player" {
                 app.buttons["显示歌词"].firstMatch.tap()
-                XCTAssertTrue(app.staticTexts["风继续吹"].firstMatch.waitForExistence(timeout: 5))
+                XCTAssertTrue(app.buttons["风继续吹"].firstMatch.waitForExistence(timeout: 5))
                 capture("android-player-lyrics")
             }
             app.terminate()
