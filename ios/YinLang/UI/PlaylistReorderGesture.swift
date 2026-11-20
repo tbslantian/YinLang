@@ -1,18 +1,13 @@
 import SwiftUI
 import UIKit
-import UIKit.UIGestureRecognizerSubclass
 
 // A local reorder uses a full-size snapshot rather than iOS's scaled drag item.
-// UIKit presents the native menu. A non-exclusive touch observer, with a common
-// run-loop timer, keeps the original finger across menu presentation/dismissal.
+// Only a stationary long press captures the scroll gesture; normal row taps and
+// vertical flicks continue to belong to NavigationLink and the parent ScrollView.
 struct PlaylistReorderGesture: UIViewRepresentable {
     var keys: [String]
     var frames: [String: CGRect]
     var grid = false
-    var titles: [String: String] = [:]
-    var edit: (String) -> Void
-    var delete: (String) -> Void
-    var menuChanged: (Bool) -> Void
     var begin: (String) -> Void
     var move: (String, Int) -> Void
     var end: (Bool) -> Void
@@ -35,49 +30,17 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         override func didMoveToSuperview() { super.didMoveToSuperview(); scheduleAttach() }
         private func scheduleAttach() { DispatchQueue.main.async { [weak self] in if let self, self.window != nil { self.attach?(self) } } }
     }
-    private final class TouchObserver: UIGestureRecognizer {
-        var down: ((CGPoint) -> Void)?
-        var moved: ((CGPoint) -> Void)?
-        var up: ((Bool) -> Void)?
-        private var finger: UITouch?
-        var isFingerDown: Bool { finger != nil }
-        // Observe from touch-down instead of staying .possible for three
-        // seconds. Neither scroll nor the system menu can fail this observer,
-        // and it cannot prevent their ordinary gestures or cancel their taps.
+    private final class LocalLongPress: UILongPressGestureRecognizer {
+        // iPad's SwiftUI navigation interaction can recognize while the finger
+        // is still stationary. It must not discard our pending long press.
+        // Moving before the hold threshold still fails via allowableMovement.
         override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-        override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-            guard finger == nil, touches.count == 1, let touch = touches.first else { stop(dropped: false); return }
-            finger = touch; state = .began
-            down?(touch.location(in: view))
-        }
-        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-            guard let finger, touches.contains(finger) else { return }
-            state = .changed; moved?(finger.location(in: view))
-        }
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-            guard let finger, touches.contains(finger) else { return }
-            moved?(finger.location(in: view)); stop(dropped: true)
-        }
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { stop(dropped: false) }
-        override func reset() {
-            if finger != nil { finger = nil; up?(false) }
-            super.reset()
-        }
-        private func stop(dropped: Bool) {
-            guard finger != nil else { state = .failed; return }
-            finger = nil; up?(dropped)
-            state = dropped ? .ended : .cancelled
-        }
     }
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIContextMenuInteractionDelegate {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var parent: PlaylistReorderGesture
         private weak var anchor: Anchor?
         private weak var scroll: UIScrollView?
-        private var gesture: TouchObserver?
-        private var holdTimer: Timer?
-        private var holdOrigin = CGPoint.zero
-        private var originalScrollEnabled: Bool?
+        private var gesture: UILongPressGestureRecognizer?
         private var lifted: UIView?
         private var scrollTimer: Timer?
         private var slots: [CGRect] = []
@@ -89,12 +52,6 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         private var fixedX: CGFloat = 0
         private var timestamp: CFTimeInterval = 0
         private var settling = false
-        private var contextMenu: UIContextMenuInteraction?
-        private var menuVisible = false
-        private var menuPreview: UIView?
-        private var pressedKey: String?
-        private var pendingDragKey: String?
-        private var pendingAction: (key: String, delete: Bool)?
 #if DEBUG
         private var originalSize = CGSize.zero
         private var maximumSizeError: CGFloat = 0
@@ -111,32 +68,16 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             var ancestor = view.superview
             while let current = ancestor, !(current is UIScrollView) { ancestor = current.superview }
             guard let window = view.window else { return }
-            // SwiftUI may update the anchor while UIKit presents a menu scroll
-            // view, or while we temporarily lock our own scroll view. Retain the
-            // original attachment instead of rebinding to the menu and losing
-            // the finger or restoring the wrong scroll view.
-            if let scroll, scroll.window === window, gesture?.view === window { return }
             // SwiftUI can host a background representable beside its scroll
             // content rather than below UIScrollView in the UIKit hierarchy.
             // In that layout locate the visible scroll viewport covering it.
             let found = (ancestor as? UIScrollView) ?? enclosingScroll(in: window, anchor: view)
             guard let found, found !== scroll else { return }
             detach(); anchor = view; scroll = found
-            let observer = TouchObserver(target: nil, action: nil)
-            observer.cancelsTouchesInView = false; observer.delaysTouchesBegan = false; observer.delaysTouchesEnded = false
-            observer.delegate = self
-            observer.down = { [weak self, weak observer] point in
-                guard let self, self.gesture === observer else { return }; self.touchDown(point)
-            }
-            observer.moved = { [weak self, weak observer] point in
-                guard let self, self.gesture === observer else { return }; self.touchMoved(point)
-            }
-            observer.up = { [weak self, weak observer] dropped in
-                guard let self, self.gesture === observer else { return }; self.touchUp(dropped: dropped)
-            }
-            gesture = observer; window.addGestureRecognizer(observer)
-            let menu = UIContextMenuInteraction(delegate: self)
-            found.addInteraction(menu); contextMenu = menu
+            let recognizer = LocalLongPress(target: self, action: #selector(handle(_:)))
+            recognizer.minimumPressDuration = 0.32; recognizer.allowableMovement = 9
+            recognizer.cancelsTouchesInView = true; recognizer.delegate = self
+            window.addGestureRecognizer(recognizer); gesture = recognizer
 #if DEBUG
             if UITestFixtures.active { DispatchQueue.main.async { [weak self] in self?.parent.report("attached") } }
 #endif
@@ -154,30 +95,25 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             return matches.max { $0.1 < $1.1 }?.0
         }
         func detach() {
-            holdTimer?.invalidate(); holdTimer = nil
             scrollTimer?.invalidate(); scrollTimer = nil
-            let observer = gesture; gesture = nil
-            if let observer { observer.view?.removeGestureRecognizer(observer) }
-            restoreScrolling()
-            pendingDragKey = nil; pendingAction = nil; pressedKey = nil
-            let oldMenu = contextMenu; contextMenu = nil
-            oldMenu?.dismissMenu()
-            if let oldMenu { scroll?.removeInteraction(oldMenu) }
-            if menuVisible {
-                let changed = parent.menuChanged
-                DispatchQueue.main.async { changed(false) }
-            }
-            menuPreview?.removeFromSuperview(); menuPreview = nil; menuVisible = false
+            if let gesture { gesture.view?.removeGestureRecognizer(gesture) }
             lifted?.layer.removeAllAnimations(); lifted?.removeFromSuperview(); lifted = nil
             gesture = nil; scroll = nil; key = nil; settling = false
+        }
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard !settling, let anchor, parent.keys.count > 1 else { return false }
+            let point = gestureRecognizer.location(in: anchor)
+            let insideScroll = scroll.map { $0.bounds.contains(gestureRecognizer.location(in: $0)) } ?? false
+            let begins = insideScroll && parent.frames.values.contains { $0.contains(point) }
+#if DEBUG
+            if UITestFixtures.active { parent.report("begin=\(begins);point=\(Int(point.x))/\(Int(point.y));frames=\(parent.frames.count);anchor=\(Int(anchor.bounds.width))/\(Int(anchor.bounds.height))") }
+#endif
+            return begins
         }
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
             guard !settling, let anchor, let scroll else { return false }
             let point = touch.location(in: anchor)
             let accepts = scroll.bounds.contains(touch.location(in: scroll)) && parent.frames.values.contains { $0.contains(point) }
-            // A fresh touch on the system menu must not start another timer.
-            guard !menuVisible, key == nil, pendingDragKey == nil else { return false }
-            pressedKey = accepts ? parent.keys.first { parent.frames[$0]?.contains(point) == true } : nil
 #if DEBUG
             if UITestFixtures.active, accepts {
                 DispatchQueue.main.async { [weak self] in self?.parent.report("touch=\(Int(point.x))/\(Int(point.y));frames=\(self?.parent.frames.count ?? 0)") }
@@ -185,132 +121,52 @@ struct PlaylistReorderGesture: UIViewRepresentable {
 #endif
             return accepts
         }
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            true
-        }
-        func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
-            guard !settling, key == nil, pendingDragKey == nil, let anchor, let scroll,
-                  scroll.bounds.contains(location) else { return nil }
-            let point = scroll.convert(location, to: anchor)
-            guard let selected = parent.keys.first(where: { parent.frames[$0]?.contains(point) == true }) else { return nil }
-            return UIContextMenuConfiguration(identifier: selected as NSString, previewProvider: nil) { [weak self] _ in
-                guard let self else { return UIMenu(children: []) }
-                let edit = UIAction(title: "编辑歌单", image: UIImage(systemName: "pencil")) { [weak self] _ in self?.selectMenuAction(selected, delete: false) }
-                let cover = UIAction(title: "更换歌单封面", image: UIImage(systemName: "photo")) { [weak self] _ in self?.selectMenuAction(selected, delete: false) }
-                let delete = UIAction(title: "删除歌单", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in self?.selectMenuAction(selected, delete: true) }
-                return UIMenu(title: self.parent.titles[selected] ?? "歌单", children: [edit, cover, delete])
-            }
-        }
-        func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
-            menuVisible = true; parent.menuChanged(true)
-        }
-        func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-            guard let selected = configuration.identifier as? String, let anchor, let scroll,
-                  let rect = parent.frames[selected],
-                  let snapshot = scroll.resizableSnapshotView(from: anchor.convert(rect, to: scroll), afterScreenUpdates: false, withCapInsets: .zero) else { return nil }
-            menuPreview?.removeFromSuperview()
-            snapshot.frame = anchor.convert(rect, to: scroll); snapshot.isUserInteractionEnabled = false
-            snapshot.layer.cornerRadius = 17; snapshot.clipsToBounds = true
-            scroll.addSubview(snapshot); menuPreview = snapshot
-            let parameters = UIPreviewParameters(); parameters.backgroundColor = .clear
-            parameters.visiblePath = UIBezierPath(roundedRect: snapshot.bounds, cornerRadius: 17)
-            return UITargetedPreview(view: snapshot, parameters: parameters)
-        }
-        func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-            guard let menuPreview, menuPreview.window != nil else { return nil }
-            let parameters = UIPreviewParameters(); parameters.backgroundColor = .clear
-            parameters.visiblePath = UIBezierPath(roundedRect: menuPreview.bounds, cornerRadius: 17)
-            return UITargetedPreview(view: menuPreview, parameters: parameters)
-        }
-        func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willEndFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
-            let complete: () -> Void = { [weak self] in
-                guard let self, self.contextMenu === interaction else { return }
-                self.menuPreview?.removeFromSuperview(); self.menuPreview = nil
-                self.menuVisible = false; self.parent.menuChanged(false)
-                if let action = self.pendingAction {
-                    self.pendingAction = nil; self.pendingDragKey = nil
-                    if action.delete { self.parent.delete(action.key) } else { self.parent.edit(action.key) }
-                } else if let selected = self.pendingDragKey, self.gesture?.isFingerDown == true {
-                    self.pendingDragKey = nil
-                    self.beginDragging(selected)
-                } else { self.pendingDragKey = nil }
-            }
-            if let animator { animator.addCompletion(complete) } else { complete() }
-        }
-        private func selectMenuAction(_ key: String, delete: Bool) {
-            holdTimer?.invalidate(); holdTimer = nil
-            pendingDragKey = nil
-            if menuVisible {
-                pendingAction = (key, delete); contextMenu?.dismissMenu()
-            } else if delete { parent.delete(key) } else { parent.edit(key) }
-        }
-        private func touchDown(_ point: CGPoint) {
-            holdTimer?.invalidate(); holdTimer = nil
-            holdOrigin = point; finger = point
-            guard pressedKey != nil, parent.keys.count > 1 else { return }
-            let timer = Timer(timeInterval: 3, repeats: false) { [weak self] _ in self?.holdCompleted() }
-            // UIKit tracks the context menu in its tracking mode. A default-mode
-            // timer may not fire until the finger lifts, which is too late.
-            RunLoop.main.add(timer, forMode: .common); holdTimer = timer
+        @objc private func handle(_ recognizer: UILongPressGestureRecognizer) {
+            guard let anchor, let window = anchor.window, let scroll else { return }
+            finger = recognizer.location(in: window)
+            switch recognizer.state {
+            case .began:
 #if DEBUG
-            if UITestFixtures.active { parent.report("tracking-hold") }
+                if UITestFixtures.active { parent.report("began") }
 #endif
-        }
-        private func touchMoved(_ point: CGPoint) {
-            finger = point
-            if key != nil {
+                let point = recognizer.location(in: anchor)
+                guard let selected = parent.keys.first(where: { parent.frames[$0]?.contains(point) == true }),
+                      let rect = parent.frames[selected],
+                      let snapshot = scroll.resizableSnapshotView(from: anchor.convert(rect, to: scroll), afterScreenUpdates: false, withCapInsets: .zero) else { return }
+                key = selected; slots = parent.keys.compactMap { parent.frames[$0] }
+                target = parent.keys.firstIndex(of: selected) ?? 0
+                snapshot.frame = anchor.convert(rect, to: window)
+                touchOffset = finger.y - snapshot.center.y; touchOffsetX = finger.x - snapshot.center.x; fixedX = snapshot.center.x
+                snapshot.isUserInteractionEnabled = false; snapshot.isAccessibilityElement = true
+                snapshot.accessibilityIdentifier = "library-playlist-drag-preview"
+                snapshot.accessibilityLabel = "正在移动歌单"
+                snapshot.accessibilityValue = "\(Int(rect.width.rounded()))×\(Int(rect.height.rounded()))"
+                snapshot.layer.shadowColor = UIColor.black.cgColor; snapshot.layer.shadowOpacity = 0.18
+                snapshot.layer.shadowRadius = 10; snapshot.layer.shadowOffset = CGSize(width: 0, height: 4)
+                snapshot.layer.cornerRadius = 16
+                window.addSubview(snapshot); lifted = snapshot
+#if DEBUG
+                originalSize = rect.size; maximumSizeError = 0; moveCount = 0; scrollDistance = 0; timerTicks = 0; edgeTicks = 0
+#endif
+                // Once the stationary long press wins, normal gesture
+                // arbitration keeps the pan from starting. Disabling the
+                // scroll view's recognizer here can cancel this touch sequence.
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                parent.begin(selected)
+                // Match Android's 32 ms edge-scroll loop. Display refresh can
+                // pause while UIKit tracks a long press on some iPad layouts.
+                timestamp = ProcessInfo.processInfo.systemUptime
+                let timer = Timer(timeInterval: 0.032, repeats: true) { [weak self] _ in self?.tick() }
+                RunLoop.main.add(timer, forMode: .common); scrollTimer = timer
+            case .changed:
                 updatePosition()
+                // Touch events still arrive on a busy display. Advance here
+                // too so edge scrolling does not depend on rendering cadence.
                 scrollAtEdge(seconds: 1.0 / 60)
-            } else if pendingDragKey == nil, hypot(point.x - holdOrigin.x, point.y - holdOrigin.y) > 10 {
-                // Ordinary scrolling or sliding onto a menu action cancels only
-                // the sorting timer; it does not interfere with UIKit's menu.
-                holdTimer?.invalidate(); holdTimer = nil
+            case .ended: finish(dropped: true)
+            case .cancelled, .failed: finish(dropped: false)
+            default: break
             }
-        }
-        private func holdCompleted() {
-            holdTimer = nil
-            guard gesture?.isFingerDown == true, let selected = pressedKey, !settling,
-                  pendingAction == nil, parent.keys.contains(selected) else { return }
-            if menuVisible {
-                pendingDragKey = selected; contextMenu?.dismissMenu()
-            } else { beginDragging(selected) }
-        }
-        private func touchUp(dropped: Bool) {
-            holdTimer?.invalidate(); holdTimer = nil
-            pendingDragKey = nil; pressedKey = nil
-            finish(dropped: dropped)
-        }
-        private func beginDragging(_ selected: String) {
-            guard gesture?.isFingerDown == true, key == nil, let anchor, let window = anchor.window, let scroll,
-                  let rect = parent.frames[selected],
-                  let snapshot = scroll.resizableSnapshotView(from: anchor.convert(rect, to: scroll), afterScreenUpdates: false, withCapInsets: .zero) else { return }
-            key = selected; slots = parent.keys.compactMap { parent.frames[$0] }
-            target = parent.keys.firstIndex(of: selected) ?? 0
-            snapshot.frame = anchor.convert(rect, to: window)
-            touchOffset = holdOrigin.y - snapshot.center.y; touchOffsetX = holdOrigin.x - snapshot.center.x; fixedX = snapshot.center.x
-            snapshot.isUserInteractionEnabled = false; snapshot.isAccessibilityElement = true
-            snapshot.accessibilityIdentifier = "library-playlist-drag-preview"
-            snapshot.accessibilityLabel = "正在移动歌单"
-            snapshot.accessibilityValue = "\(Int(rect.width.rounded()))×\(Int(rect.height.rounded()))"
-            snapshot.layer.shadowColor = UIColor.black.cgColor; snapshot.layer.shadowOpacity = 0.18
-            snapshot.layer.shadowRadius = 10; snapshot.layer.shadowOffset = CGSize(width: 0, height: 4)
-            snapshot.layer.cornerRadius = 16
-            window.addSubview(snapshot); lifted = snapshot
-#if DEBUG
-            originalSize = rect.size; maximumSizeError = 0; moveCount = 0; scrollDistance = 0; timerTicks = 0; edgeTicks = 0
-#endif
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            parent.begin(selected)
-            originalScrollEnabled = scroll.isScrollEnabled; scroll.isScrollEnabled = false
-            // A real interruption during the takeover must not leave a floating
-            // preview or a disabled scroll view after the finger is gone.
-            guard gesture?.isFingerDown == true, key == selected else { return }
-            // Match Android's 32 ms edge-scroll loop. Display refresh can
-            // pause while UIKit tracks a long press on some iPad layouts.
-            timestamp = ProcessInfo.processInfo.systemUptime
-            let timer = Timer(timeInterval: 0.032, repeats: true) { [weak self] _ in self?.tick() }
-            RunLoop.main.add(timer, forMode: .common); scrollTimer = timer
-            updatePosition()
         }
         private func updatePosition() {
             guard let anchor, let window = anchor.window, let lifted, let key, let scroll, !slots.isEmpty else { return }
@@ -340,6 +196,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         private func tick() {
             let now = ProcessInfo.processInfo.systemUptime
             let dt = min(0.1, max(0.016, now - timestamp)); timestamp = now
+            if let window = anchor?.window, let gesture { finger = gesture.location(in: window) }
 #if DEBUG
             timerTicks += 1
 #endif
@@ -369,7 +226,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             updatePosition()
         }
         private func finish(dropped: Bool) {
-            guard key != nil, let anchor, let window = anchor.window, let lifted else { restoreScrolling(); return }
+            guard key != nil, let anchor, let window = anchor.window, let lifted else { return }
             scrollTimer?.invalidate(); scrollTimer = nil; settling = true
             key = nil
 #if DEBUG
@@ -382,13 +239,8 @@ struct PlaylistReorderGesture: UIViewRepresentable {
                 lifted.frame = destination; lifted.layer.shadowOpacity = 0
             } completion: { [weak self] _ in
                 guard let self else { lifted.removeFromSuperview(); return }
-                self.restoreScrolling()
                 self.parent.end(dropped); lifted.removeFromSuperview(); self.lifted = nil; self.settling = false
             }
-        }
-        private func restoreScrolling() {
-            if let originalScrollEnabled { scroll?.isScrollEnabled = originalScrollEnabled }
-            originalScrollEnabled = nil
         }
     }
 }

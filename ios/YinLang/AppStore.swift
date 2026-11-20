@@ -37,6 +37,7 @@ final class AppStore: ObservableObject {
     }
     func disconnect() { defaults.removeObject(forKey: "nav-url"); defaults.removeObject(forKey: "nav-user"); connectionRevision += 1 }
     func libraryItem(_ row: JSONObject, kind: String = "song") -> MediaItem { var row = row; row["_account"] = nav?.identity ?? ""; return MediaItem(row, source: "library", kind: kind) }
+    func libraryPlaylistsChanged() { libraryPlaylistRevision += 1 }
     func changePlaylistCover(_ item: MediaItem, jpeg: Data?) async throws -> MediaItem {
         guard let nav, item.source == "library", item.kind == "playlist", item.raw.string("_account") == nav.identity else { throw AppFailure.message("音乐库账号已变更，请重新打开歌单") }
         let refreshed = try await nav.changePlaylistCover(item.key, jpeg: jpeg)

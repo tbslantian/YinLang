@@ -2,6 +2,34 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 
+struct PlaylistCoverPage: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    let item: MediaItem
+    @State private var currentItem: MediaItem?
+    @State private var editable = false
+    @State private var busy = false
+    @State private var error = ""
+    private var canEdit: Bool { editable && item.raw.string("_account") == store.nav?.identity }
+    var body: some View {
+        AndroidForm {
+            Text(currentItem?.title ?? item.title).font(.system(size: 18, weight: .bold)).foregroundStyle(Palette.ink)
+            PlaylistCoverEditor(item: currentItem ?? item, editable: canEdit, busy: $busy)
+            if !error.isEmpty { Text(error).font(.system(size: 13)).foregroundStyle(Palette.accent) }
+        }.androidPage("更改歌单封面", category: "音乐库") { Button("完成") { dismiss() }.disabled(busy) }
+            .interactiveDismissDisabled(busy)
+            .task {
+                guard let nav = store.nav, item.raw.string("_account") == nav.identity else { error = "音乐库账号已变更，请重新打开歌单"; return }
+                do {
+                    let playlist = try await nav.playlist(item.key)
+                    guard !Task.isCancelled, store.nav?.identity == nav.identity else { return }
+                    currentItem = store.libraryItem(playlist, kind: "playlist"); editable = nav.canEdit(playlist)
+                    if !editable { error = "当前账号没有修改此歌单封面的权限" }
+                } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+            }
+    }
+}
+
 struct PlaylistCoverEditor: View {
     @EnvironmentObject private var store: AppStore
     let item: MediaItem
