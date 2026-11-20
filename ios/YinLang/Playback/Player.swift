@@ -167,7 +167,13 @@ final class Player: ObservableObject {
                 if let track = try? await asset.loadTracks(withMediaType: .audio).first {
                     _ = YLAttachAudioEffects(item, track)
                     audioInfoTask = Task { [weak self] in
-                        let info = await AudioStreamInfo.read(track)
+                        var info = await AudioStreamInfo.read(track, asset: asset, url: url, headers: headers)
+                        if current.source == "library", store.nav?.playbackSettings().bitrate == "0" {
+                            // Original Navidrome stream metadata describes this
+                            // file; do not apply it to a transcoded response.
+                            if info.bitsPerSecond <= 0, let rate = Double(current.raw.string("bitRate")), rate > 0 { info.bitsPerSecond = rate * 1000 }
+                            if info.sampleRate <= 0, let sample = Double(current.raw.string("samplingRate")), sample > 0 { info.sampleRate = sample }
+                        }
                         guard let self, self.generation == token, !Task.isCancelled else { return }
                         self.audioInfo = info
                     }

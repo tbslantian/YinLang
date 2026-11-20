@@ -100,7 +100,7 @@ final class LayoutTests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
         let app = launch("player")
-        XCTAssertEqual(app.staticTexts["player-audio-info"].firstMatch.label, "FLAC · 96 kHz")
+        XCTAssertEqual(app.staticTexts["player-audio-info"].firstMatch.label, "FLAC · 960 kbps · 96 kHz")
         let portrait = app.descendants(matching: .any).matching(identifier: "player-artwork-stage").firstMatch
         XCTAssertTrue(portrait.waitForExistence(timeout: 8))
         XCUIDevice.shared.orientation = .landscapeLeft
