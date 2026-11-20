@@ -13,6 +13,7 @@ struct TelevisionView: View {
     @State private var controlsVisible = true
     @State private var controlsRevision = 0
     @State private var previousIdleTimer = false
+    @State private var screenCaptured = false
     private var ink: Color { Color(rgb: dark ? 0xfffbff : 0x291e24) }
     private var accent: Color { Color(rgb: dark ? 0xffcedd : 0x9a3e54) }
     private var activeLineID: String? { player.lyrics.last { $0.time <= player.elapsed }?.id }
@@ -45,7 +46,13 @@ struct TelevisionView: View {
                     playbackProgress
                 }.padding(.horizontal, inset).padding(.bottom, inset)
                 VStack {
-                    if controlsVisible { controls.padding(.horizontal, inset).transition(.opacity) }
+                    if controlsVisible {
+                        VStack(spacing: 6) {
+                            controls
+                            Text(screenCaptured ? "屏幕共享已激活（镜像或录屏）" : "尚未检测到画面共享，请在控制中心开启屏幕镜像")
+                                .font(.system(size: 12)).foregroundStyle(ink.opacity(0.75))
+                        }.padding(.horizontal, inset).transition(.opacity)
+                    }
                     Spacer(minLength: 0)
                 }
             }.foregroundStyle(ink).contentShape(Rectangle())
@@ -54,6 +61,9 @@ struct TelevisionView: View {
         .preferredColorScheme(dark ? .dark : .light)
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
+        .background { ScreenCaptureObserver { captured in
+            if screenCaptured != captured { screenCaptured = captured; revealControls() }
+        }.frame(width: 0, height: 0) }
         .onAppear {
             previousIdleTimer = UIApplication.shared.isIdleTimerDisabled
             UIApplication.shared.isIdleTimerDisabled = true
@@ -147,5 +157,30 @@ struct TelevisionView: View {
     private func revealControls() {
         withAnimation(.easeOut(duration: 0.15)) { controlsVisible = true }
         controlsRevision += 1
+    }
+}
+
+// Use the screen containing this view, rather than assuming UIScreen.main is
+// the window's display. Captured also includes recording; don't label it as a
+// confirmed Apple TV connection.
+private struct ScreenCaptureObserver: UIViewRepresentable {
+    let changed: (Bool) -> Void
+    func makeUIView(context: Context) -> CaptureView { let view = CaptureView(frame: .zero); view.changed = changed; return view }
+    func updateUIView(_ view: CaptureView, context: Context) { view.changed = changed }
+    @MainActor
+    final class CaptureView: UIView {
+        var changed: ((Bool) -> Void)?
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: UIScreen.capturedDidChangeNotification, object: nil)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func didMoveToWindow() { super.didMoveToWindow(); refresh() }
+        @objc private func refresh() {
+            guard let screen = window?.windowScene?.screen else { return }
+            let captured = screen.isCaptured
+            DispatchQueue.main.async { [weak self] in self?.changed?(captured) }
+        }
+        deinit { NotificationCenter.default.removeObserver(self) }
     }
 }

@@ -134,7 +134,7 @@ struct PlayerView: View {
             .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
             .sheet(isPresented: $player.showQueue) { QueueView().environmentObject(store).environmentObject(player) }
             .sheet(isPresented: $menu) { PlayerMenuView().environmentObject(store).environmentObject(player) }
-            .sheet(isPresented: $cast) { CastView(player: player).environmentObject(player) }
+            .sheet(isPresented: $cast) { CastView(player: player).environmentObject(store).environmentObject(player) }
             .sheet(isPresented: $chooseMode) { PlayerChoice(title: "播放模式", rows: PlayMode.allCases.map { $0.title }, selected: player.mode.title) { value in if let mode = PlayMode.allCases.first(where: { $0.title == value }) { player.mode = mode } } }
             .sheet(isPresented: $sleep) { PlayerChoice(title: "定时关闭", rows: ["15 分钟","30 分钟","45 分钟","60 分钟","90 分钟","播完当前内容暂停","关闭定时"], selected: "") { value in if value == "播完当前内容暂停" { player.sleepAfterCurrent = true; player.sleepUntil = nil } else { player.setSleep(Int(value.components(separatedBy: " ").first ?? "")) } } }
     }

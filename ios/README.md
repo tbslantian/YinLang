@@ -2,6 +2,16 @@
 
 原生 SwiftUI 通用应用，最低 iOS / iPadOS 17。iPhone 与 iPad 使用同一套安卓页面结构，iPad 仅扩展可用宽度、封面网格列数并支持横竖屏，不增加侧栏。首页默认经典影像，直接复用安卓版 `home_music_light/dark`、`home_books_light/dark` 原图。
 
+## 0.8.21 镜像音频路由与 DLNA 搜索
+
+构建号 24。针对手机歌词正常、电视仅显示封面的实机反馈，电视画面期间改用跟随屏幕镜像的默认音频路由策略，不再在切歌或继续播放时重设为共享的长音频输出；关闭画面恢复原配置。镜像音频切换不触发 AirPlay 拔出暂停。电视画面点按后显示是否检测到画面共享，该状态同时包含屏幕镜像与录屏，无法据此独立确认 Apple TV 连接。投送页补充关闭音频投送、重新开启控制中心屏幕镜像的操作说明。
+
+DLNA 在各可用 IPv4 局域网接口上进行两轮、多设备／服务类型搜索，等待八秒接收回应；显示发送次数、回应数量与网络错误。设备描述并行读取并设置超时，兼容 XML 命名空间、URLBase、UDN 和控制服务版本。成功识别过的描述地址保存后会在下次搜索重新验证。新增“按设备 IP 或描述地址连接”，按 IP 使用单播 SSDP，只兼容回应此类搜索的设备；完整 XML 地址仍可使用。
+
+工程接入 `YinLang/Multicast.entitlements` 多播权限声明。自动发现需要用户允许本地网络，且安装签名／描述文件具备 Apple 授权的多播能力；未签名构建及普通重签不能自动获得受限权限。无需多播的按 IP 搜索和描述地址读取仍需本地网络许可及设备支持。投送页提供系统设置入口。蓝牙或厂商专用投送不代表设备提供 DLNA／UPnP 接收服务；未验证所有小米／小爱型号。
+
+参考 [Apple 本地网络隐私说明 TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)、[多播权限](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.networking.multicast)和[默认音频路由策略](https://developer.apple.com/documentation/avfaudio/avaudiosession/routesharingpolicy-swift.enum/default)。未做本版 Apple TV／音箱实机验收。沿用用户要求，不运行测试，启动通用设备编译后结束，不等待完成、不发布下载链接。
+
 ## 0.8.20 电视全屏画面（系统屏幕镜像）
 
 构建号 23。针对 Apple TV 中央黑屏、仅底部显示歌曲封面的截图，新增“播放器 → 投送 → 电视画面 → 打开封面／唱片与同步歌词”。在控制中心手动选择“屏幕镜像 → Apple TV”，打开电视画面并将设备横放：左边显示封面或旋转唱片，右边显示随当前播放进度高亮滚动的歌词；竖屏为上下布局。歌词可隐藏，封面和唱片使用播放器已有样式设置。背景、明暗配色、封面缓存和 24 秒匀速唱片都复用原实现。
@@ -229,4 +239,4 @@ xcodebuild -project ios/YinLang.xcodeproj -scheme YinLang \
 
 ## 验收边界
 
-iOS 使用系统 AirPlay。DLNA 转发支持当前在线文件和本机文件，HLS 不进行转码；自动发现需要签名时具有 Apple 的多播网络权限，未开通时可手动填写设备描述 XML 地址。`Multicast.entitlements` 提供相应配置参考，未签名构建不要求权限证书。音效通过本机音轨处理，HLS、受保护媒体和外部投送受系统输出路径限制。自动更新在进入前台时按周期执行，后台调度遵循 iOS 限制。音频格式取决于 iOS 解码能力。第三方音乐源、听书网站、登录验证码、Navidrome 实例及真实 AirPlay / DLNA 设备仍需使用实际账号与设备联调；模拟器编译和测试不能替代这些验收。
+iOS 使用系统 AirPlay。DLNA 转发支持当前在线文件和本机文件，HLS 不进行转码；自动发现需要本地网络许可和实际安装签名中的 Apple 多播网络权限。工程引用 `YinLang/Multicast.entitlements`，未签名构建不需要权限证书，但无法代替安装时的能力授权。不具备多播权限时，可对兼容设备按 IP 搜索，或填写完整设备描述 XML 地址。音效通过本机音轨处理，HLS、受保护媒体和外部投送受系统输出路径限制。自动更新在进入前台时按周期执行，后台调度遵循 iOS 限制。音频格式取决于 iOS 解码能力。第三方音乐源、听书网站、登录验证码、Navidrome 实例及真实 AirPlay / DLNA 设备仍需使用实际账号与设备联调；模拟器编译和测试不能替代这些验收。

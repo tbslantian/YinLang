@@ -37,7 +37,7 @@ final class Player: ObservableObject {
     private var load: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
     private var externalMetadata = ExternalPlaybackMetadata()
-    private var externalPlaybackBeforeTelevision: (allowed: Bool, whileMirroring: Bool)?
+    private var externalPlaybackBeforeTelevision: (allowed: Bool, whileMirroring: Bool, policy: AVAudioSession.RouteSharingPolicy)?
     private var audioInfoTask: Task<Void, Never>?
     private var cacheTask: Task<Void, Never>?
     private typealias ResolvedAudio = (URL, [String: String], String)
@@ -336,8 +336,11 @@ final class Player: ObservableObject {
         do {
             // Long-form playback already supports AirPlay. Explicit allowAirPlay is
             // a playAndRecord option and fails with OSStatus -50 on physical devices.
-            if session.category != .playback || session.mode != .default || session.routeSharingPolicy != .longFormAudio {
-                try session.setCategory(.playback, mode: .default, policy: .longFormAudio)
+            // Screen Mirroring owns the picture and audio route while the TV
+            // view is visible. Do not reselect the shared audio-only output.
+            let policy: AVAudioSession.RouteSharingPolicy = externalPlaybackBeforeTelevision == nil ? .longFormAudio : .default
+            if session.category != .playback || session.mode != .default || session.routeSharingPolicy != policy {
+                try session.setCategory(.playback, mode: .default, policy: policy)
             }
             try session.setActive(true)
             refreshAudioOutput()
@@ -356,18 +359,24 @@ final class Player: ObservableObject {
     }
     func beginTelevisionPresentation() {
         guard externalPlaybackBeforeTelevision == nil else { return }
-        externalPlaybackBeforeTelevision = (audio.allowsExternalPlayback, audio.usesExternalPlaybackWhileExternalScreenIsActive)
+        externalPlaybackBeforeTelevision = (audio.allowsExternalPlayback, audio.usesExternalPlaybackWhileExternalScreenIsActive, AVAudioSession.sharedInstance().routeSharingPolicy)
         // Render our own picture through system screen mirroring. AVPlayer's
         // external video presentation can otherwise cover it with an audio-only
         // receiver screen. The AVAudioSession still routes audio to AirPlay.
         audio.usesExternalPlaybackWhileExternalScreenIsActive = false
         audio.allowsExternalPlayback = false
+        do { try activateAudioSession() }
+        catch { store?.message = error.localizedDescription }
     }
     func endTelevisionPresentation() {
         guard let previous = externalPlaybackBeforeTelevision else { return }
         externalPlaybackBeforeTelevision = nil
         audio.usesExternalPlaybackWhileExternalScreenIsActive = previous.whileMirroring
         audio.allowsExternalPlayback = previous.allowed
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, policy: previous.policy)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch { store?.message = error.localizedDescription }
         refreshAirPlayRoute()
     }
     private func refreshAudioOutput() {
@@ -381,8 +390,10 @@ final class Player: ObservableObject {
         refreshAudioOutput()
         let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
         let returnedToPhone = outputs.contains { $0.portType == .builtInSpeaker || $0.portType == .builtInReceiver }
-        let personalPorts: [AVAudioSession.Port] = [.headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .usbAudio, .airPlay]
-        let lostPersonalRoute = previous?.outputs.contains { personalPorts.contains($0.portType) } == true
+        let personalPorts: [AVAudioSession.Port] = [.headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .usbAudio]
+        let lostPersonalRoute = previous?.outputs.contains {
+            personalPorts.contains($0.portType) || ($0.portType == .airPlay && externalPlaybackBeforeTelevision == nil)
+        } == true
         // Replacing one external route with AirPlay is not unplugging headphones.
         if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
            dlna.current == nil, returnedToPhone, lostPersonalRoute,
