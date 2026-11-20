@@ -11,7 +11,7 @@ struct MiniPlayer: View {
         if let item = player.current {
             VStack(spacing: 5) {
                 HStack(spacing: 6) {
-                    Button { player.toggle() } label: { Artwork(item: item, size: 48).overlay { Color.black.opacity(0.4); YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: 24).foregroundStyle(.white) }.clipShape(RoundedRectangle(cornerRadius: 11)).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityLabel(player.playing ? "暂停" : "播放").accessibilityIdentifier("mini-play-pause").onLongPressGesture { player.showPlayer = true }
+                    MiniPlayerCover(item: item)
                     Button { player.showPlayer = true } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             if player.resolutionNotice != nil {
@@ -34,6 +34,31 @@ struct MiniPlayer: View {
                 }.padding(.horizontal, 8).padding(.vertical, 6).background(Palette.paper.opacity(0.95), in: RoundedRectangle(cornerRadius: 30)).overlay { RoundedRectangle(cornerRadius: 30).stroke(.white.opacity(0.25), lineWidth: 1) }.shadow(color: .black.opacity(0.1), radius: 6, y: 2)
             }.padding(.horizontal, 14).padding(.bottom, 10).padding(.top, 5)
         }
+    }
+}
+
+private struct MiniPlayerCover: View {
+    @EnvironmentObject var player: Player
+    let item: MediaItem
+    @State private var coverControlVisible = true
+    @State private var coverControlRevision = 0
+    var body: some View {
+        Button {
+            player.toggle()
+            coverControlVisible = true
+            coverControlRevision += 1
+        } label: {
+            Artwork(item: item, size: 48).overlay {
+                if coverControlVisible {
+                    Color.black.opacity(0.4)
+                    YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: 24).foregroundStyle(.white)
+                }
+            }.clipShape(RoundedRectangle(cornerRadius: 11)).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel(player.playing ? "暂停" : "播放").accessibilityIdentifier("mini-play-pause").onLongPressGesture { player.showPlayer = true }
+            .task(id: coverControlRevision) {
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                withAnimation(.easeOut(duration: 0.18)) { coverControlVisible = false }
+            }
     }
 }
 

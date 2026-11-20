@@ -1,3 +1,5 @@
+import { miguChartCovers } from './migu-chart-covers.js'
+
 // Artwork lookup must never call the normal, full-chart song loader.
 export function makeChartCoverLoader({ httpFetch, weapi }) {
   return async (charts, source, id) => {
@@ -20,6 +22,9 @@ export function makeChartCoverLoader({ httpFetch, weapi }) {
       if (statusCode !== 200 || body?.errcode !== 0) throw Error('未能获取榜首封面')
       const track = body.data?.info?.[0]
       if (track) cover = charts.filterData([track])[0]?.img || ''
+    } else if (source === 'mg') {
+      const result = await miguChartCovers(charts)
+      cover = result.list.find(row => row.id === String(id).replace(/^mg__/, ''))?.cover || ''
     } else if (source === 'kw') {
       // Isolate the limit; concurrent chart browsing must keep its normal page size.
       const single = Object.create(charts)

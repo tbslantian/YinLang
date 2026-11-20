@@ -2,7 +2,6 @@ import SwiftUI
 
 struct CatalogView: View {
     @EnvironmentObject var store: AppStore
-    @EnvironmentObject var player: Player
     var mode: String
     @State private var platform = "all"
     @State private var query = ""
@@ -53,7 +52,7 @@ struct CatalogView: View {
                     if mode == "lists" || mode == "charts" { layoutControls(width: proxy.size.width) }
                     if !error.isEmpty { ErrorPanel(text: error) { Task { await reload(refresh: true) } } }
                     if rows.isEmpty && !loading && error.isEmpty { ErrorPanel(text: mode == "search" ? "输入歌名或歌手，开始寻找喜欢的声音" : "暂无内容") }
-                    if mode == "search" { LazyVStack(spacing: 6) { ForEach(rows) { item in SongRow(item: item) { player.play(rows, at: rows.firstIndex(of: item) ?? 0) } } } }
+                    if mode == "search" { CatalogSearchResults(rows: rows) }
                     else if grid {
                         LazyVGrid(columns: columns, spacing: 8) {
                             ForEach(filtered) { item in NavigationLink { CatalogDetailView(item: item, chart: mode == "charts") } label: { CatalogCard(item: item, chart: mode == "charts", height: max(134, min(178, cardWidth * 0.8))) }.accessibilityIdentifier("catalog-card-" + item.id) }
@@ -107,7 +106,22 @@ struct CatalogView: View {
                 let result = try await nav.search(query, offset: (requested - 1) * 50); items = result.map { store.libraryItem($0) }; hasMore = result.count == 50
             } else {
                 let result = try await store.catalog(mode, ["source": platform, "query": query, "sort": sort, "tag": tag, "page": requested], refresh: refresh)
-                items = result.rows("list").map { MediaItem($0, kind: mode == "charts" ? "chart" : mode == "lists" ? "playlist" : "song") }; hasMore = result["more"] as? Bool ?? false
+                var catalogItems = result.rows("list").map { MediaItem($0, kind: mode == "charts" ? "chart" : mode == "lists" ? "playlist" : "song") }
+                if mode == "charts" {
+                    // Fetch board metadata once per platform instead of starting
+                    // one top-song request as every scrolling card appears.
+                    for source in Set(catalogItems.map(\.source)) {
+                        guard token == generation, !Task.isCancelled else { return }
+                        if let artwork = try? await store.catalog("chart-covers", ["source": source], refresh: refresh) {
+                            var covers: [String: String] = [:]
+                            for row in artwork.rows("list") { covers[row.string("id")] = row.string("cover") }
+                            for index in catalogItems.indices where catalogItems[index].source == source && catalogItems[index].cover.isEmpty {
+                                if let cover = covers[catalogItems[index].catalogID], !cover.isEmpty { catalogItems[index].cover = cover }
+                            }
+                        }
+                    }
+                }
+                items = catalogItems; hasMore = result["more"] as? Bool ?? false
             }
             guard token == generation, !Task.isCancelled else { return }
             let existing = Set(rows.map(\.id)); rows += items.filter { !existing.contains($0.id) }; page = requested; more = hasMore && !items.isEmpty
@@ -131,6 +145,19 @@ struct CatalogView: View {
     private func openLink() {
         do { linkedPlaylist = try PlaylistLink.item(link, platform: platform) }
         catch { store.message = error.localizedDescription }
+    }
+}
+
+// Catalog grids do not observe the player's half-second progress updates.
+private struct CatalogSearchResults: View {
+    @EnvironmentObject var player: Player
+    let rows: [MediaItem]
+    var body: some View {
+        LazyVStack(spacing: 6) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
+                SongRow(item: item) { player.play(rows, at: index) }
+            }
+        }
     }
 }
 

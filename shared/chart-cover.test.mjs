@@ -72,7 +72,7 @@ test('Kuwo one-song limit is isolated from concurrent full chart browsing', asyn
 })
 
 test('Unsupported lightweight source keeps placeholder without loading a full chart', async () => {
-  assert.deepEqual(await makeChartCoverLoader({})({ getList: () => assert.fail('Full chart requested') }, 'mg', '1'), { list: [] })
+  assert.deepEqual(await makeChartCoverLoader({})({ getList: () => assert.fail('Full chart requested') }, 'unsupported', '1'), { list: [] })
 })
 
 test('Provider failure stops without falling back to a full chart', async () => {

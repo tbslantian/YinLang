@@ -18,6 +18,7 @@ final class AppStore: ObservableObject {
     @Published var nowBook: MediaItem? = Disk.read("last-book.json", fallback: Optional<MediaItem>.none)
     private var runtimes: [String: ScriptRuntime] = [:]
     private var starts: [String: Task<ScriptRuntime, Error>] = [:]
+    private var coverRequests: [String: Task<JSONObject, Error>] = [:]
     private let defaults = UserDefaults.standard
     init() { Disk.save(plugins, "plugins.json") }
     var nav: Navidrome? {
@@ -68,13 +69,28 @@ final class AppStore: ObservableObject {
     }
     func invalidate(_ id: String) { runtimes.removeValue(forKey: id)?.close(); starts.removeValue(forKey: id)?.cancel() }
     func catalog(_ operation: String, _ args: JSONObject, refresh: Bool = false) async throws -> JSONObject {
+        guard !refresh, operation == "chart-cover" || operation == "chart-covers" else {
+            return try await loadCatalog(operation, args, refresh: refresh)
+        }
+        let key = operation + jsonText(args)
+        if let request = coverRequests[key] { return try await request.value }
+        let request = Task { try await self.loadCatalog(operation, args, refresh: false) }
+        coverRequests[key] = request
+        defer { coverRequests.removeValue(forKey: key) }
+        return try await request.value
+    }
+    private func loadCatalog(_ operation: String, _ args: JSONObject, refresh: Bool) async throws -> JSONObject {
 #if DEBUG
         if UITestFixtures.active { return UITestFixtures.catalog(operation, args: args, refresh: refresh) }
 #endif
-        let key = "catalog-" + Disk.hash(operation + jsonText(args)) + ".json"
+        let artworkLookup = operation == "chart-cover" || operation == "chart-covers"
+        // A new namespace bypasses the old cached empty Migu artwork responses.
+        let prefix = artworkLookup ? "artwork-v2-" : operation == "charts" && args.string("source") == "mg" ? "charts-v2-" : "catalog-"
+        let key = prefix + Disk.hash(operation + jsonText(args)) + ".json"
         let file = Disk.directory(Disk.cache.appendingPathComponent("catalog")).appendingPathComponent(key)
         if !refresh, let info = try? file.resourceValues(forKeys: [.contentModificationDateKey]), Date().timeIntervalSince(info.contentModificationDate ?? .distantPast) < 10800,
-           let bytes = try? Data(contentsOf: file), let cached = try? JSONSerialization.jsonObject(with: bytes) as? JSONObject { return cached }
+           let bytes = try? Data(contentsOf: file), let cached = try? JSONSerialization.jsonObject(with: bytes) as? JSONObject,
+           !artworkLookup || !cached.rows("list").isEmpty { return cached }
         guard let url = Bundle.main.url(forResource: "catalog.bundle", withExtension: "js", subdirectory: "Runtime") else { throw AppFailure.message("音乐目录资源缺失") }
         let scripts = try String(contentsOf: url, encoding: .utf8)
         // A forced refresh also resets adapter memory (for example a cached QQ
@@ -86,9 +102,11 @@ final class AppStore: ObservableObject {
         else { runtime = try await self.runtime("catalog", scripts: scripts) }
         do {
             guard let result = try await runtime.call("SoundShelfCatalog(\(quote(operation)),\(jsonText(args)))") as? JSONObject else { throw AppFailure.message("音乐平台未返回有效内容") }
-            try JSONSerialization.data(withJSONObject: result).write(to: file, options: .atomic); return result
+            if !artworkLookup || !result.rows("list").isEmpty { try JSONSerialization.data(withJSONObject: result).write(to: file, options: .atomic) }
+            return result
         } catch {
-            if !refresh, let bytes = try? Data(contentsOf: file), let cached = try? JSONSerialization.jsonObject(with: bytes) as? JSONObject { return cached }; throw error
+            if !refresh, let bytes = try? Data(contentsOf: file), let cached = try? JSONSerialization.jsonObject(with: bytes) as? JSONObject,
+               !artworkLookup || !cached.rows("list").isEmpty { return cached }; throw error
         }
     }
     func install(_ data: Data, name: String, address: String, books: Bool) async throws {

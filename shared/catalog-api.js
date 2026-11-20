@@ -1,3 +1,5 @@
+import { miguChartCovers } from './migu-chart-covers.js'
+
 const platforms = ['wy', 'tx', 'kg', 'kw', 'mg']
 
 const chartCoverFields = {
@@ -8,6 +10,7 @@ const chartCoverFields = {
 }
 
 async function chartCovers(charts, source) {
+  if (source === 'mg') return miguChartCovers(charts)
   const fields = chartCoverFields[source]
   if (!fields) return { list: [] }
   const response = await charts.getBoardsData()
@@ -46,7 +49,13 @@ export function makeCatalog(adapters, chartCover) {
       }
       case 'tags': return { ...await playlists.getTags(), sorts: playlists.sortList || [] }
       case 'list': result = await playlists.getListDetail(args.id, page); break
-      case 'charts': result = await charts.getBoards(); break
+      case 'charts': {
+        result = await charts.getBoards()
+        // The legacy European board now returns success with an empty
+        // columnInfo. Do not keep offering an unopenable, coverless chart.
+        if (source === 'mg') result = { ...result, list: result.list.filter(row => String(row.bangid) !== '19190036') }
+        break
+      }
       case 'chart-covers': return chartCovers(charts, source)
       case 'chart-cover': return chartCover(charts, source, args.id)
       case 'chart': result = await charts.getList(args.id, page); break
