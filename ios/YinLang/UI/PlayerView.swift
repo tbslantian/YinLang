@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import MediaPlayer
+import QuartzCore
 
 struct MiniPlayer: View {
     @EnvironmentObject var player: Player
@@ -219,16 +220,102 @@ private struct PlayerVinyl: View {
     let item: MediaItem
     let edge: CGFloat
     let playing: Bool
-    @State private var rotating = false
+    @Environment(\.scenePhase) private var scenePhase
+    var body: some View {
+        VinylRotationSurface(item: item, edge: edge, playing: playing && scenePhase == .active)
+            .frame(width: edge, height: edge)
+    }
+}
+private struct VinylDiscArtwork: View {
+    let item: MediaItem
+    let edge: CGFloat
     var body: some View {
         ZStack {
             Circle().fill(Color(white: 0.06))
             ForEach(0..<22) { index in Circle().stroke(.white.opacity(index % 3 == 0 ? 0.12 : 0.05), lineWidth: 1).padding(CGFloat(10 + index * 4)) }
             Artwork(item: item, size: edge * 0.43).clipShape(Circle())
             Circle().fill(.black).frame(width: 13, height: 13)
-        }.frame(width: edge, height: edge).rotationEffect(.degrees(rotating ? 360 : 0))
-            .animation(playing ? .linear(duration: 24).repeatForever(autoreverses: false) : nil, value: rotating)
-            .onAppear { rotating = playing }.onChange(of: playing) { _, value in rotating = value }
+        }.frame(width: edge, height: edge)
+    }
+}
+private struct VinylRotationSurface: UIViewRepresentable {
+    @EnvironmentObject private var store: AppStore
+    let item: MediaItem
+    let edge: CGFloat
+    let playing: Bool
+    func makeUIView(context: Context) -> VinylRotationView { VinylRotationView(frame: .zero) }
+    func updateUIView(_ view: VinylRotationView, context: Context) {
+        view.configure(item: item, edge: edge, store: store)
+        view.setPlaying(playing)
+    }
+    static func dismantleUIView(_ view: VinylRotationView, coordinator: ()) { view.setPlaying(false) }
+}
+// Rotation belongs to one layer, independent of Player's progress publications
+// and SwiftUI animation transactions. Android also uses 24 seconds per turn.
+private final class VinylRotationView: UIView {
+    private static let secondsPerTurn: CFTimeInterval = 24
+    private let hosting = UIHostingController(rootView: AnyView(EmptyView()))
+    private var displayedItem: MediaItem?
+    private var displayedEdge: CGFloat = 0
+    private var wantsPlaying = false
+    private var rotating = false
+    private var angle = 0.0
+    private var startedAt: CFTimeInterval = 0
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isUserInteractionEnabled = false
+        hosting.view.backgroundColor = .clear
+        hosting.view.isUserInteractionEnabled = false
+        hosting.safeAreaRegions = []
+        addSubview(hosting.view)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func configure(item: MediaItem, edge: CGFloat, store: AppStore) {
+        guard displayedItem != item || displayedEdge != edge else { return }
+        displayedItem = item; displayedEdge = edge
+        hosting.rootView = AnyView(VinylDiscArtwork(item: item, edge: edge).environmentObject(store))
+        setNeedsLayout()
+    }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Updating a rotated view's frame can change its bounds and distort
+        // the disc; update untransformed bounds and center instead.
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        hosting.view.bounds = CGRect(origin: .zero, size: bounds.size)
+        hosting.view.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        CATransaction.commit()
+    }
+    override func didMoveToWindow() { super.didMoveToWindow(); updateRotation() }
+    func setPlaying(_ playing: Bool) { wantsPlaying = playing; updateRotation() }
+    private func updateRotation() {
+        let layer = hosting.view.layer
+        let shouldRotate = wantsPlaying && window != nil
+        guard shouldRotate != rotating || (rotating && layer.animation(forKey: "vinyl-rotation") == nil) else { return }
+        let now = CACurrentMediaTime()
+        if rotating {
+            // Capture the visible angle before removing the animation. The
+            // monotonic clock is a fallback if the layer is no longer visible.
+            if let visible = layer.presentation() {
+                angle = atan2(Double(visible.transform.m12), Double(visible.transform.m11))
+            } else {
+                angle = (angle + (now - startedAt) * 2 * .pi / Self.secondsPerTurn).truncatingRemainder(dividingBy: 2 * .pi)
+            }
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            layer.setValue(angle, forKeyPath: "transform.rotation.z")
+            layer.removeAnimation(forKey: "vinyl-rotation")
+            CATransaction.commit()
+            rotating = false
+        }
+        guard shouldRotate else { return }
+        let rotation = CABasicAnimation(keyPath: "transform.rotation.z")
+        rotation.fromValue = angle
+        rotation.toValue = angle + 2 * .pi
+        rotation.duration = Self.secondsPerTurn
+        rotation.timingFunction = CAMediaTimingFunction(name: .linear)
+        rotation.repeatCount = .infinity
+        layer.add(rotation, forKey: "vinyl-rotation")
+        startedAt = now; rotating = true
     }
 }
 struct BufferedProgress: View {
