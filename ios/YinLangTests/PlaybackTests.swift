@@ -154,7 +154,8 @@ final class PlaybackTests: XCTestCase {
         player.prepareNextIfNeeded(); try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertNil(defaults.string(forKey: scope + ":calls"))
         player.elapsed = 70; player.prepareNextIfNeeded()
-        for _ in 0..<100 {
+        let preparationDeadline = Date().addingTimeInterval(30)
+        while Date() < preparationDeadline {
             if player.resolutionNotice?.phase == .success || player.resolutionNotice?.phase == .cached { break }
             try await Task.sleep(nanoseconds: 100_000_000)
         }

@@ -150,7 +150,11 @@ struct PlaylistReorderGesture: UIViewRepresentable {
                 timestamp = 0
                 let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
                 link.add(to: .main, forMode: .common); displayLink = link
-            case .changed: updatePosition()
+            case .changed:
+                updatePosition()
+                // Touch events still arrive on a busy display. Advance here
+                // too so edge scrolling does not depend on rendering cadence.
+                scrollAtEdge(seconds: 1.0 / 60)
             case .ended: finish(dropped: true)
             case .cancelled, .failed: finish(dropped: false)
             default: break
@@ -175,15 +179,18 @@ struct PlaylistReorderGesture: UIViewRepresentable {
 #endif
         }
         @objc private func tick(_ link: CADisplayLink) {
+            let dt = timestamp == 0 ? link.duration : min(0.1, link.timestamp - timestamp); timestamp = link.timestamp
+            scrollAtEdge(seconds: dt)
+        }
+        private func scrollAtEdge(seconds: CFTimeInterval) {
             guard let scroll, let anchor, let window = anchor.window, key != nil else { return }
-            let dt = timestamp == 0 ? link.duration : min(0.05, link.timestamp - timestamp); timestamp = link.timestamp
             let viewport = scroll.convert(scroll.bounds.inset(by: scroll.adjustedContentInset), to: window).intersection(window.bounds)
-            let edge: CGFloat = 64
+            let edge = max(CGFloat(64), (lifted?.bounds.height ?? 0) * 1.25)
             let up = max(0, min(1, (viewport.minY + edge - finger.y) / edge))
             let down = max(0, min(1, (finger.y - viewport.maxY + edge) / edge))
             let minimum = -scroll.adjustedContentInset.top
             let maximum = max(minimum, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
-            let y = min(maximum, max(minimum, scroll.contentOffset.y + (down - up) * 620 * dt))
+            let y = min(maximum, max(minimum, scroll.contentOffset.y + (down - up) * 620 * seconds))
             if abs(y - scroll.contentOffset.y) > 0.1 {
 #if DEBUG
                 scrollDistance += abs(y - scroll.contentOffset.y)
