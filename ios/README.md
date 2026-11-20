@@ -2,7 +2,15 @@
 
 原生 SwiftUI 通用应用，最低 iOS / iPadOS 17。iPhone 与 iPad 使用同一套安卓页面结构，iPad 仅扩展可用宽度、封面网格列数并支持横竖屏，不增加侧栏。首页默认经典影像，直接复用安卓版 `home_music_light/dark`、`home_books_light/dark` 原图。
 
-## 0.8.15 音乐库歌单卡片与服务器封面
+## 0.8.16 歌单系统长按菜单
+
+构建号 19。移除音乐库歌单卡片与列表行的三点编辑按钮。自己的歌单改用 UIKit 原生 `UIContextMenuInteraction`，长按弹出“编辑歌单／更换歌单封面／删除歌单”；松手可保留菜单选择操作，删除需再次确认并校验当前服务器账号与歌单修改权限。VoiceOver 提供相同编辑、封面和删除操作。
+
+同一次触摸持续按住满 3 秒时，通过公开 `dismissMenu()` API 收起菜单，在菜单收起动画结束且手指仍按住时接续原尺寸拖动；提前松手或取消不开始排序。拖动与菜单期间禁止普通点击打开，松手后继续短暂抑制进入歌单。卡片与列表均保留原尺寸、二维／上下换位、边缘自动滚动和本账号排序保存。菜单手势与三秒按住识别允许同时存在，普通滚动不进入排序；共享歌单继续只读。
+
+系统菜单与生命周期接口根据 [Apple UIContextMenuInteraction](https://developer.apple.com/documentation/uikit/uicontextmenuinteraction) 和 [dismissMenu()](https://developer.apple.com/documentation/uikit/uicontextmenuinteraction/dismissmenu()) 核对；三秒衔接是应用对系统菜单的定制时序。本轮按用户要求不运行测试、未做真机手势验收；启动 iPhone／iPad 通用设备 Release 编译后结束，不等待构建完成，也不发布下载链接。
+
+## 0.8.15 音乐库歌单卡片与服务器封面（历史版本）
 
 构建号 18。“我的歌单／共享歌单／创建歌单”一行末尾新增与在线排行榜一致的卡片／列表切换按钮，默认保留列表模式，选择会保存。卡片使用现有榜单的圆角、封面遮罩与文字风格，手机自适应较少列、平板可显示更多列；两种视图共用排序，我的歌单长按拖动保持原尺寸，卡片支持横向及纵向换位，拖动结束不自动打开歌单。
 

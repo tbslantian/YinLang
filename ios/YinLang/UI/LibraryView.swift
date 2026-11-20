@@ -58,7 +58,7 @@ struct LibraryView: View {
                 if !error.isEmpty { ErrorPanel(text: error) { Task { await load() } } }
                 let visible = playlists.filter { isOwn($0) != shared }
                 if visible.isEmpty && error.isEmpty { Text(shared ? "暂无其他用户共享的歌单。" : "此账户暂无歌单。").font(.system(size: 13)).foregroundStyle(Palette.muted) }
-                if !shared && !visible.isEmpty { Text("长按歌单拖动排序，点右侧 ⋯ 编辑或删除。").font(.system(size: 13)).foregroundStyle(Palette.muted) }
+                if !shared && !visible.isEmpty { Text("长按歌单显示编辑菜单，持续按住 3 秒后拖动排序。").font(.system(size: 13)).foregroundStyle(Palette.muted) }
                 LibraryPlaylistRows(items: Binding(get: { playlists.filter { isOwn($0) != shared } }, set: { rows in
                     playlists = rows + playlists.filter { isOwn($0) == shared }
                 }), reorderable: !shared, grid: playlistGrid, width: navigationWidth) { UserDefaults.standard.set(playlists.filter(isOwn).map(\.key), forKey: orderKey) }
@@ -97,6 +97,7 @@ private struct PlaylistTabStyle: ButtonStyle {
 }
 
 private struct LibraryPlaylistRows: View {
+    @EnvironmentObject private var store: AppStore
     @Binding var items: [MediaItem]
     var reorderable: Bool
     var grid = false
@@ -107,6 +108,8 @@ private struct LibraryPlaylistRows: View {
     @State private var suppressOpenUntil = Date.distantPast
     @State private var opened: MediaItem?
     @State private var editing: MediaItem?
+    @State private var deleting: MediaItem?
+    @State private var menuVisible = false
     @State private var original: [MediaItem] = []
 #if DEBUG
     @State private var reorderAudit = "idle"
@@ -129,7 +132,14 @@ private struct LibraryPlaylistRows: View {
         }.coordinateSpace(name: "library-playlists")
             .onPreferenceChange(PlaylistRowFrames.self) { frames = $0 }
             .background {
-                if reorderable && opened == nil && editing == nil { PlaylistReorderGesture(keys: items.map(\.key), frames: frames, grid: grid, begin: { original = items; dragging = $0; suppressOpenUntil = .distantFuture }, move: { key, index in
+                if reorderable && opened == nil && editing == nil && deleting == nil { PlaylistReorderGesture(keys: items.map(\.key), frames: frames, grid: grid, titles: items.reduce(into: [:]) { $0[$1.key] = $1.title }, edit: { key in
+                    if let item = items.first(where: { $0.key == key }) { editing = item }
+                }, delete: { key in
+                    if let item = items.first(where: { $0.key == key }) { deleting = item }
+                }, menuChanged: { visible in
+                    menuVisible = visible
+                    suppressOpenUntil = visible ? .distantFuture : Date().addingTimeInterval(0.5)
+                }, begin: { original = items; dragging = $0; suppressOpenUntil = .distantFuture }, move: { key, index in
                     guard let from = items.firstIndex(where: { $0.key == key }), from != index, items.indices.contains(index) else { return }
                     withAnimation(.easeInOut(duration: 0.16)) { items.move(fromOffsets: IndexSet(integer: from), toOffset: index > from ? index + 1 : index) }
                 }, end: { dropped in
@@ -143,6 +153,9 @@ private struct LibraryPlaylistRows: View {
             }
             .navigationDestination(item: $opened) { item in LibraryListView(kind: "playlist", identifier: item.key, title: item.title) }
             .navigationDestination(item: $editing) { item in PlaylistEditor(item: item) }
+            .confirmationDialog("删除歌单“\(deleting?.title ?? "")”？歌曲文件会保留。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+                if let item = deleting { Button("删除歌单", role: .destructive) { deleting = nil; Task { await deletePlaylist(item) } } }
+            }
 #if DEBUG
             .overlay(alignment: .topLeading) {
                 if UITestFixtures.active { Text(" ").font(.system(size: 1)).accessibilityLabel("拖动检查").accessibilityValue(reorderAudit).accessibilityIdentifier("library-reorder-audit").allowsHitTesting(false) }
@@ -151,20 +164,36 @@ private struct LibraryPlaylistRows: View {
     }
     private func playlist(_ item: MediaItem) -> some View {
         Group {
-            if grid { LibraryPlaylistCard(item: item, editable: reorderable, open: { if canOpen { opened = item } }, edit: { if canOpen { editing = item } }) }
-            else { LibraryPlaylistRow(item: item, editable: reorderable, open: { if canOpen { opened = item } }, edit: { if canOpen { editing = item } }) }
+            if grid { LibraryPlaylistCard(item: item, open: { if canOpen { opened = item } }) }
+            else { LibraryPlaylistRow(item: item, open: { if canOpen { opened = item } }) }
         }.opacity(dragging == item.key ? 0.35 : 1)
             .background { GeometryReader { proxy in Color.clear.preference(key: PlaylistRowFrames.self, value: [item.key: proxy.frame(in: .named("library-playlists"))]) } }
+            .accessibilityHint(reorderable ? "长按显示菜单，持续按住三秒后拖动排序" : "打开共享歌单")
+            .accessibilityActions {
+                if reorderable {
+                    Button("编辑歌单") { editing = item }
+                    Button("更换歌单封面") { editing = item }
+                    Button("删除歌单", role: .destructive) { deleting = item }
+                }
+            }
     }
-    private var canOpen: Bool { dragging == nil && Date() >= suppressOpenUntil }
+    private var canOpen: Bool { dragging == nil && !menuVisible && Date() >= suppressOpenUntil }
+    private func deletePlaylist(_ item: MediaItem) async {
+        do {
+            guard let nav = store.nav, item.raw.string("_account") == nav.identity else { throw AppFailure.message("音乐库账号已变更，请重新打开歌单") }
+            let latest = try await nav.playlist(item.key)
+            guard nav.canEdit(latest) else { throw AppFailure.message("当前账号没有修改此歌单的权限") }
+            _ = try await nav.get("deletePlaylist", [.init(name: "id", value: item.key)])
+            guard store.nav?.identity == nav.identity else { return }
+            items.removeAll { $0.id == item.id }; save()
+        } catch { store.message = error.localizedDescription }
+    }
 }
 
 private struct LibraryPlaylistCard: View {
     @EnvironmentObject private var store: AppStore
     let item: MediaItem
-    let editable: Bool
     let open: () -> Void
-    let edit: () -> Void
     var body: some View {
         Button(action: open) {
             ZStack(alignment: .bottomLeading) {
@@ -177,12 +206,6 @@ private struct LibraryPlaylistCard: View {
                 .overlay { RoundedRectangle(cornerRadius: 17).stroke(.white.opacity(0.3), lineWidth: 1).allowsHitTesting(false) }
                 .contentShape(RoundedRectangle(cornerRadius: 17))
         }.buttonStyle(.plain).accessibilityIdentifier("library-playlist-open-" + item.key)
-            .overlay(alignment: .topTrailing) {
-                if editable {
-                    Button(action: edit) { YLIcon(systemName: "ellipsis", size: 19).foregroundStyle(.white).frame(width: 44, height: 44).background(.black.opacity(0.25), in: Circle()).contentShape(Circle()) }
-                        .buttonStyle(.plain).padding(6).accessibilityLabel("歌单操作").accessibilityIdentifier("library-playlist-edit-" + item.key)
-                }
-            }
     }
 }
 
@@ -193,9 +216,7 @@ private struct PlaylistRowFrames: PreferenceKey {
 
 private struct LibraryPlaylistRow: View {
     let item: MediaItem
-    var editable: Bool
     var open: () -> Void
-    var edit: () -> Void
     private var label: some View {
         HStack(spacing: 12) {
             Artwork(item: item)
@@ -211,13 +232,9 @@ private struct LibraryPlaylistRow: View {
         let day = stamp.count >= 10 ? String(stamp.prefix(10)) : ""
         return "\(item.raw.string("songCount")) 首歌曲" + (day.isEmpty ? "" : " · 更新于 " + day)
     }
-    private var menuIcon: some View { YLIcon(systemName: "ellipsis", size: 19).foregroundStyle(Palette.accent).frame(width: 48, height: 48).contentShape(Rectangle()) }
     var body: some View {
-        HStack(spacing: 0) {
-            Button(action: open) { label }
-                .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("library-playlist-open-" + item.key)
-            if editable { Button(action: edit) { menuIcon }.accessibilityLabel("歌单操作").accessibilityIdentifier("library-playlist-edit-" + item.key) }
-        }.frame(maxWidth: .infinity).androidSurface().buttonStyle(.plain)
+        Button(action: open) { label }
+            .frame(maxWidth: .infinity, alignment: .leading).androidSurface().buttonStyle(.plain).accessibilityIdentifier("library-playlist-open-" + item.key)
     }
 }
 
