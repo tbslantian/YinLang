@@ -29,6 +29,12 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         override func didMoveToSuperview() { super.didMoveToSuperview(); scheduleAttach() }
         private func scheduleAttach() { DispatchQueue.main.async { [weak self] in if let self, self.window != nil { self.attach?(self) } } }
     }
+    private final class LocalLongPress: UILongPressGestureRecognizer {
+        // iPad's SwiftUI navigation interaction can recognize while the finger
+        // is still stationary. It must not discard our pending long press.
+        // Moving before the hold threshold still fails via allowableMovement.
+        override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+    }
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var parent: PlaylistReorderGesture
         private weak var anchor: Anchor?
@@ -62,7 +68,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             let found = (ancestor as? UIScrollView) ?? enclosingScroll(in: window, anchor: view)
             guard let found, found !== scroll else { return }
             detach(); anchor = view; scroll = found
-            let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handle(_:)))
+            let recognizer = LocalLongPress(target: self, action: #selector(handle(_:)))
             recognizer.minimumPressDuration = 0.32; recognizer.allowableMovement = 9
             recognizer.cancelsTouchesInView = true; recognizer.delegate = self
             window.addGestureRecognizer(recognizer); gesture = recognizer
@@ -97,6 +103,17 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             if UITestFixtures.active { parent.report("begin=\(begins);point=\(Int(point.x))/\(Int(point.y));frames=\(parent.frames.count);anchor=\(Int(anchor.bounds.width))/\(Int(anchor.bounds.height))") }
 #endif
             return begins
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard !settling, let anchor, let scroll else { return false }
+            let point = touch.location(in: anchor)
+            let accepts = scroll.bounds.contains(touch.location(in: scroll)) && parent.frames.values.contains { $0.contains(point) }
+#if DEBUG
+            if UITestFixtures.active, accepts {
+                DispatchQueue.main.async { [weak self] in self?.parent.report("touch=\(Int(point.x))/\(Int(point.y));frames=\(self?.parent.frames.count ?? 0)") }
+            }
+#endif
+            return accepts
         }
         @objc private func handle(_ recognizer: UILongPressGestureRecognizer) {
             guard let anchor, let window = anchor.window, let scroll else { return }
