@@ -171,7 +171,7 @@ struct DownloadsView: View {
     @EnvironmentObject var player: Player
     var body: some View {
         AndroidList {
-            if store.downloads.isEmpty { ErrorPanel(text: "还没有本机下载。歌曲菜单可保存音频。") }
+            if store.downloads.isEmpty { ErrorPanel(text: "还没有本机下载。歌曲菜单、听书章节页和播放器菜单可保存音频。") }
             ForEach(store.downloads) { download in
                 HStack { SongRow(item: download.item) { player.play(store.downloads.map(\.item), at: store.downloads.firstIndex(where: { $0.id == download.id }) ?? 0) }
                     Button(role: .destructive) { store.deleteDownload(download.id) } label: { YLIcon(systemName: "trash").frame(width: 44, height: 44) }.accessibilityLabel("删除下载") }

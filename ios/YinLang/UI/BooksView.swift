@@ -147,6 +147,7 @@ struct BookDetailView: View {
     @State private var loading = false
     @State private var query = ""
     @State private var reverse = false
+    @State private var showDownloads = false
     var displayed: [MediaItem] { let list = query.isEmpty ? episodes : episodes.filter { $0.title.localizedCaseInsensitiveContains(query) }; return reverse ? Array(list.reversed()) : list }
     var body: some View {
         AndroidList {
@@ -154,10 +155,21 @@ struct BookDetailView: View {
             Button("收藏 / 取消收藏") { store.toggleShelf(book) }.buttonStyle(AndroidButtonStyle())
             if !description.isEmpty { Text(description).font(.system(size: 14)).foregroundStyle(Palette.muted).padding(.vertical, 8) }
             HStack(spacing: 12) { if !episodes.isEmpty { Button("从第一章播放") { player.play(displayed) }.buttonStyle(AndroidButtonStyle(primary: true)); Button("继续收听") { let saved = store.nowBook; if let saved, saved.raw.string("_book") == book.id { player.resumeBook(saved) } else { player.play(episodes) } }.buttonStyle(AndroidButtonStyle()) }; Spacer(); Button { reverse.toggle() } label: { YLIcon(systemName: "arrow.up.arrow.down").frame(width: 44, height: 44) }.accessibilityLabel("章节排序") }
+            if !episodes.isEmpty {
+                Button { showDownloads = true } label: { Label("下载章节", systemImage: "arrow.down.circle") }.buttonStyle(AndroidButtonStyle()).accessibilityIdentifier("book-download-chapters")
+            }
             AndroidSearch(text: $query, hint: "搜索章节")
-            ForEach(Array(displayed.enumerated()), id: \.offset) { index, item in Button { player.play(displayed, at: index) } label: { HStack { Text("\(index + 1)  " + item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).padding(.vertical, 10); Spacer(); YLIcon(systemName: "play.fill", size: 17).foregroundStyle(Palette.accent).frame(width: 28, height: 36) }.padding(.leading, 12).padding(.trailing, 10).padding(.vertical, 8).androidSurface() }.buttonStyle(.plain).accessibilityIdentifier("book-chapter-\(index)") }
+            ForEach(Array(displayed.enumerated()), id: \.element.id) { index, item in
+                HStack(spacing: 0) {
+                    Button { player.play(displayed, at: index) } label: {
+                        HStack { Text("\(index + 1)  " + item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).padding(.vertical, 10); Spacer(); YLIcon(systemName: "play.fill", size: 17).foregroundStyle(Palette.accent).frame(width: 28, height: 36) }.contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityIdentifier("book-chapter-\(index)")
+                    ChapterDownloadButton(item: item)
+                }.padding(.leading, 12).padding(.trailing, 6).padding(.vertical, 8).androidSurface()
+            }
             if loading { ProgressView().frame(maxWidth: .infinity) }; if !error.isEmpty { ErrorPanel(text: error) { Task { await load() } } }
         }.androidPage(book.title, category: "有声书 / 章节").task { if episodes.isEmpty { await load() } }.refreshable { await load() }
+            .sheet(isPresented: $showDownloads) { ChapterDownloadPicker(book: book, episodes: displayed).environmentObject(store) }
     }
     private func load() async {
         guard !loading else { return }; loading = true; error = ""; defer { loading = false }
@@ -166,6 +178,66 @@ struct BookDetailView: View {
             description = detail.string("description", "intro")
             episodes = BookPlayback.episodes(detail, book: book)
         } catch { self.error = error.localizedDescription }
+    }
+}
+
+private struct ChapterDownloadButton: View {
+    @EnvironmentObject private var store: AppStore
+    let item: MediaItem
+    private var busy: Bool { store.downloading.contains(item.id) }
+    private var saved: Bool { store.hasDownload(item) }
+    var body: some View {
+        Button { store.downloadEpisodes([item]) } label: {
+            Group {
+                if busy { ProgressView().tint(Palette.accent) }
+                else { YLIcon(systemName: saved ? "checkmark.circle.fill" : "arrow.down.circle", size: 21).foregroundStyle(Palette.accent) }
+            }.frame(width: 44, height: 44).contentShape(Rectangle())
+        }.buttonStyle(.plain).disabled(busy || saved)
+            .accessibilityLabel(busy ? "章节下载中" : saved ? "章节已下载" : "下载 " + item.title)
+            .accessibilityIdentifier("book-chapter-download-" + item.key)
+    }
+}
+
+private struct ChapterDownloadPicker: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    let book: MediaItem
+    let episodes: [MediaItem]
+    @State private var selected: Set<String> = []
+    @State private var query = ""
+    private var displayed: [MediaItem] { query.isEmpty ? episodes : episodes.filter { $0.title.localizedCaseInsensitiveContains(query) } }
+    private func available(_ item: MediaItem) -> Bool { !store.downloading.contains(item.id) && !store.hasDownload(item) }
+    private var chosen: [MediaItem] { episodes.filter { selected.contains($0.id) && available($0) } }
+    var body: some View {
+        NavigationStack {
+            AndroidList {
+                Text(book.title).font(.system(size: 18, weight: .bold)).foregroundStyle(Palette.ink)
+                Text("下载的章节保存在本机下载，可离线收听。").font(.system(size: 13)).foregroundStyle(Palette.muted)
+                AndroidSearch(text: $query, hint: "搜索要下载的章节")
+                HStack(spacing: 12) {
+                    Button("全选当前列表") { selected.formUnion(displayed.filter(available).map(\.id)) }
+                    Button("清空选择") { selected = [] }
+                }.buttonStyle(AndroidButtonStyle())
+                ForEach(displayed) { item in
+                    Button {
+                        if selected.contains(item.id) { selected.remove(item.id) } else { selected.insert(item.id) }
+                    } label: {
+                        HStack(spacing: 10) {
+                            YLIcon(systemName: selected.contains(item.id) ? "checkmark.circle.fill" : "circle", size: 21).foregroundStyle(Palette.accent)
+                            Text(item.title).font(.system(size: 15)).foregroundStyle(Palette.ink).frame(maxWidth: .infinity, alignment: .leading)
+                            if store.downloading.contains(item.id) { Text("下载中").font(.caption).foregroundStyle(Palette.muted) }
+                            else if store.hasDownload(item) { Text("已下载").font(.caption).foregroundStyle(Palette.muted) }
+                        }.padding(12).androidSurface().contentShape(Rectangle())
+                    }.buttonStyle(.plain).disabled(!available(item))
+                }
+            }.androidPage("下载章节", category: "有声书") { Button("完成") { dismiss() } }
+                .safeAreaInset(edge: .bottom) {
+                    Button("下载所选（\(chosen.count) 章）") {
+                        store.downloadEpisodes(chosen); dismiss()
+                    }.buttonStyle(AndroidButtonStyle(primary: true)).disabled(chosen.isEmpty)
+                        .padding(.horizontal, 16).padding(.vertical, 12).frame(maxWidth: .infinity).background(Palette.background)
+                }
+        }.presentationDetents([.large]).presentationCornerRadius(30).presentationDragIndicator(.visible)
     }
 }
 

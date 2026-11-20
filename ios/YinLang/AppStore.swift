@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
+import AVFoundation
 
 @MainActor
 final class AppStore: ObservableObject {
@@ -19,6 +20,8 @@ final class AppStore: ObservableObject {
     private var runtimes: [String: ScriptRuntime] = [:]
     private var starts: [String: Task<ScriptRuntime, Error>] = [:]
     private var coverRequests: [String: Task<JSONObject, Error>] = [:]
+    private var chapterDownloadQueue: [MediaItem] = []
+    private var chapterDownloadTask: Task<Void, Never>?
     private let defaults = UserDefaults.standard
     init() { Disk.save(plugins, "plugins.json") }
     var nav: Navidrome? {
@@ -292,39 +295,86 @@ final class AppStore: ObservableObject {
         if !embedded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !embedded.hasPrefix("http") { return embedded }
         return (try? await catalog("lyric", ["source": item.source, "music": item.onlineMusicInfo]).string("lyric")) ?? ""
     }
-    func download(_ item: MediaItem) async {
-        guard item.kind == "song", !downloading.contains(item.id) else { return }; downloading.insert(item.id); defer { downloading.remove(item.id) }
-        do {
-            let quality = defaults.string(forKey: "quality") ?? "320k"
-            let resolved: (URL, [String: String], String)
-            if item.source == "library" {
-                guard let nav, item.raw.string("_account") == nav.identity else { throw AppFailure.message("音乐库账号已变更，请从当前音乐库选择歌曲") }
-                resolved = (try nav.stream(item, original: true), [:], "Navidrome")
-            } else { resolved = try await resolve(item, fallback: false, useLocal: false, quality: quality) }
-            var request = URLRequest(url: resolved.0); request.allHTTPHeaderFields = resolved.1
-            let temp: URL
-            if resolved.0.isFileURL { temp = resolved.0 }
-            else {
-                let (file, response) = try await URLSession.shared.download(for: request)
-                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), !(http.mimeType ?? "").contains("text"), !(http.mimeType ?? "").contains("json") else { throw AppFailure.message("下载返回了无效音频") }; temp = file
+    func hasDownload(_ item: MediaItem) -> Bool {
+        downloads.contains { $0.id == item.id && FileManager.default.fileExists(atPath: Disk.documents.appendingPathComponent($0.filename).path) }
+    }
+    func downloadEpisodes(_ items: [MediaItem]) {
+        var seen = Set<String>()
+        let pending = items.filter { $0.kind == "episode" && seen.insert($0.id).inserted && !downloading.contains($0.id) && !hasDownload($0) }
+        guard !pending.isEmpty else { message = "所选章节已下载或正在下载"; return }
+        chapterDownloadQueue += pending
+        downloading.formUnion(pending.map(\.id))
+        message = "已加入下载 \(pending.count) 个章节"
+        guard chapterDownloadTask == nil else { return }
+        // Resolve and save one chapter at a time. A large selection must not
+        // open hundreds of plugin/audio requests or replace the playing queue.
+        chapterDownloadTask = Task {
+            var completed = 0, failures = 0, firstFailure = ""
+            while !chapterDownloadQueue.isEmpty {
+                let item = chapterDownloadQueue.removeFirst()
+                do { try await saveDownload(item); completed += 1 }
+                catch { failures += 1; if firstFailure.isEmpty { firstFailure = item.title + "：" + error.localizedDescription } }
+                downloading.remove(item.id)
             }
-            let handle = try FileHandle(forReadingFrom: temp); let header = try handle.read(upToCount: 32) ?? Data(); try handle.close()
-            let ext: String
-            if header.starts(with: Data("fLaC".utf8)) { ext = "flac" }
-            else if header.starts(with: Data("OggS".utf8)) { ext = "ogg" }
-            else if header.starts(with: Data("RIFF".utf8)) { ext = "wav" }
-            else if header.count >= 8 && String(decoding: header[4..<8], as: UTF8.self) == "ftyp" { ext = "m4a" }
-            else if header.starts(with: Data("ID3".utf8)) || (header.count >= 2 && header[0] == 255 && header[1] & 224 == 224) { ext = "mp3" }
-            else { throw AppFailure.message("下载格式暂不支持；HLS 请使用服务器下载") }
-            // Write the replacement before retiring the previous download, including same-format upgrades.
-            let filename = Disk.hash(item.id) + "-" + UUID().uuidString + "." + ext
-            let target = Disk.documents.appendingPathComponent(filename)
-            try FileManager.default.copyItem(at: temp, to: target)
-            let previous = downloads.filter { $0.item.id == item.id }
-            downloads.removeAll { $0.item.id == item.id }; downloads.append(.init(item: item, filename: filename))
-            for old in previous { try? FileManager.default.removeItem(at: Disk.documents.appendingPathComponent(old.filename)) }
-            message = "已保存到本机"
-        } catch { message = error.localizedDescription }
+            chapterDownloadTask = nil
+            message = failures == 0 ? "已保存 \(completed) 个章节到本机" : "已保存 \(completed) 个章节，\(failures) 个下载失败\n" + firstFailure
+        }
+    }
+    func download(_ item: MediaItem) async {
+        if item.kind == "episode" { downloadEpisodes([item]); return }
+        guard item.kind == "song", !downloading.contains(item.id) else { return }
+        downloading.insert(item.id); defer { downloading.remove(item.id) }
+        do { try await saveDownload(item); message = "已保存到本机" }
+        catch { message = error.localizedDescription }
+    }
+    private func saveDownload(_ item: MediaItem) async throws {
+        let quality = defaults.string(forKey: "quality") ?? "320k"
+        let resolved: (URL, [String: String], String)
+        if item.source == "library", item.kind != "episode" {
+            guard let nav, item.raw.string("_account") == nav.identity else { throw AppFailure.message("音乐库账号已变更，请从当前音乐库选择歌曲") }
+            resolved = (try nav.stream(item, original: true), [:], "Navidrome")
+        } else { resolved = try await resolve(item, fallback: false, useLocal: false, quality: quality) }
+        guard resolved.0.isFileURL || ["http", "https"].contains(resolved.0.scheme?.lowercased() ?? "") else { throw AppFailure.message("下载地址无效") }
+        guard resolved.0.pathExtension.lowercased() != "m3u8" else { throw AppFailure.message("该音频为流媒体，此书源暂不支持本机下载") }
+        var request = URLRequest(url: resolved.0); request.allHTTPHeaderFields = resolved.1
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        request.timeoutInterval = 90
+        let temp: URL
+        var temporaryFile: URL?
+        defer { if let temporaryFile { try? FileManager.default.removeItem(at: temporaryFile) } }
+        if resolved.0.isFileURL { temp = resolved.0 }
+        else {
+            let (file, response) = try await URLSession.shared.download(for: request)
+            temporaryFile = file
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  !(http.mimeType ?? "").contains("text"), !(http.mimeType ?? "").contains("json"),
+                  !(http.mimeType ?? "").contains("mpegurl") else { throw AppFailure.message("下载返回了无效音频") }
+            let length = Int64((try file.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0)
+            guard length > 0, response.expectedContentLength <= 0 || length == response.expectedContentLength else { throw AppFailure.message("音频下载不完整，请重试") }
+            temp = file
+        }
+        let handle = try FileHandle(forReadingFrom: temp); let header = try handle.read(upToCount: 32) ?? Data(); try handle.close()
+        let ext: String
+        if header.starts(with: Data("fLaC".utf8)) { ext = "flac" }
+        else if header.starts(with: Data("OggS".utf8)) { ext = "ogg" }
+        else if header.starts(with: Data("RIFF".utf8)) { ext = "wav" }
+        else if header.count >= 8 && String(decoding: header[4..<8], as: UTF8.self) == "ftyp" { ext = "m4a" }
+        else if header.count >= 2 && header[0] == 255 && header[1] & 246 == 240 { ext = "aac" }
+        else if header.starts(with: Data("ID3".utf8)) || (header.count >= 2 && header[0] == 255 && header[1] & 224 == 224) { ext = "mp3" }
+        else { throw AppFailure.message(item.kind == "episode" ? "此书源的音频格式暂不支持本机下载" : "下载格式暂不支持；HLS 请使用服务器下载") }
+        // Write the replacement before retiring the previous download, including same-format upgrades.
+        let filename = Disk.hash(item.id) + "-" + UUID().uuidString + "." + ext
+        let target = Disk.documents.appendingPathComponent(filename)
+        try FileManager.default.copyItem(at: temp, to: target)
+        do {
+            let asset = AVURLAsset(url: target)
+            let playable = try await asset.load(.isPlayable)
+            let tracks = try await asset.loadTracks(withMediaType: .audio)
+            guard playable, !tracks.isEmpty else { throw AppFailure.message("下载音频无法播放，请重试") }
+        } catch { try? FileManager.default.removeItem(at: target); throw error }
+        let previous = downloads.filter { $0.item.id == item.id }
+        downloads.removeAll { $0.item.id == item.id }; downloads.append(.init(item: item, filename: filename))
+        for old in previous { try? FileManager.default.removeItem(at: Disk.documents.appendingPathComponent(old.filename)) }
     }
     func deleteDownload(_ id: String) { if let item = downloads.first(where: { $0.id == id }) { try? FileManager.default.removeItem(at: Disk.documents.appendingPathComponent(item.filename)); downloads.removeAll { $0.id == id } } }
     func server(_ path: String, method: String = "GET", body: JSONObject? = nil) async throws -> JSONObject {

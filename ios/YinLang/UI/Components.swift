@@ -101,6 +101,9 @@ struct SongActionsView: View {
                 Text(item.title).font(.system(size: 21, weight: .bold))
                 Button { player.insertNext(item); dismiss() } label: { AndroidRow(title: "下一首播放", icon: "list.bullet") }.buttonStyle(.plain)
                 Button { store.toggleLike(item); dismiss() } label: { AndroidRow(title: store.isLiked(item) ? "取消喜欢" : "喜欢", icon: "heart") }.buttonStyle(.plain)
+                if item.kind == "episode" {
+                    Button { store.downloadEpisodes([item]); dismiss() } label: { AndroidRow(title: store.downloading.contains(item.id) ? "章节下载中" : store.hasDownload(item) ? "章节已下载" : "下载当前章节", icon: "arrow.down.circle") }.buttonStyle(.plain).disabled(store.downloading.contains(item.id) || store.hasDownload(item))
+                }
                 if item.kind == "song" {
                     Button { Task { await store.download(item) }; dismiss() } label: { AndroidRow(title: "下载到本机", icon: "arrow.down.circle") }.buttonStyle(.plain)
                     if item.source != "library" { Button { Task { await store.push(item) }; dismiss() } label: { AndroidRow(title: "推送到服务器", icon: "server.rack") }.buttonStyle(.plain) }

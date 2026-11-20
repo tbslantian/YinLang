@@ -29,9 +29,11 @@ struct PlayerMenuView: View {
                         if let item = current, item.source == "library", !book {
                             NavigationLink { SongDetailsView(item: item) } label: { row("info.circle", "查看", "歌曲详情、专辑与艺术家") }
                         }
-                        if let item = current, !book, item.source != "offline" {
-                            Button { Task { await store.download(item) }; dismiss() } label: { row("arrow.down.circle", "下载到手机") }.accessibilityIdentifier("player-menu-download")
-                            if item.source != "library" {
+                        if let item = current, item.source != "offline" {
+                            Button { Task { await store.download(item) }; dismiss() } label: {
+                                row("arrow.down.circle", book ? "下载当前章节" : "下载到手机", store.downloading.contains(item.id) ? "下载中" : store.hasDownload(item) ? "已下载" : "")
+                            }.disabled(store.downloading.contains(item.id) || (book && store.hasDownload(item))).accessibilityIdentifier("player-menu-download")
+                            if !book, item.source != "library" {
                                 if UserDefaults.standard.bool(forKey: "server-enabled"), !(UserDefaults.standard.string(forKey: "server-url") ?? "").isEmpty {
                                     Button { Task { await store.push(item) }; dismiss() } label: { row("server.rack", "推送到服务端下载") }.accessibilityIdentifier("player-menu-push")
                                 } else { NavigationLink { SettingsView() } label: { row("server.rack", "推送到服务端下载", "未配置") }.accessibilityIdentifier("player-menu-push") }
