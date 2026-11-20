@@ -1,5 +1,13 @@
 # iOS 构建记录
 
+## 0.8.8（2026-11-20）
+
+最终源码 `664405cef91cef4b857d2b06e4f51e220ee2ddd0`，版本 0.8.8、构建号 11。[设备编译任务](https://github.com/tbslantian/YinLang/actions/runs/44672348148)成功，按用户要求跳过全部模拟器及音频 DSP 测试，未做真机验收。
+
+正在解析／验证及成功、缓存、失败通知均改在常驻播放条中间显示；移除页面和全屏播放器独立解析浮层。Navidrome 原曲及下一首准备不发布解析类提示，缓存完成和真实错误反馈保留。
+
+IPA 已核验来源提交、版本、设备族 `[1,2]`、未签名状态与 SHA256 `20da492e703e951df89266ae75cf10514a583bd8f4359558ccc47fa8ac3ad60a`。[0.8.8 Release](https://github.com/tbslantian/YinLang/releases/tag/ios-v0.8.8)。
+
 ## 0.8.7（2026-11-20）
 
 最终代码 `4ec2dee8f636010283da467841d002575c0830ca`，版本 0.8.7、构建号 10。[只编译的最终任务](https://github.com/tbslantian/YinLang/actions/runs/44664256264)成功，按用户最后要求跳过全部模拟器测试。

@@ -8,7 +8,7 @@
 
 Navidrome 直接载入服务器音频，屏蔽解析进行、验证、成功及失败的提示，包括预备下一首；缓存完成仍可显示缓存通知，实际播放错误继续保留错误反馈。在线音源的下一首预解析成功仍按其真实来源处理。
 
-按用户要求只进行设备 Release 编译，跳过模拟器与音频 DSP 测试。构建和下载记录将在发布后更新。
+2026-11-20：[设备 Release 构建](https://github.com/tbslantian/YinLang/actions/runs/44672348148)成功，源码 `664405cef91cef4b857d2b06e4f51e220ee2ddd0`。按用户要求跳过模拟器与音频 DSP 测试，未做真机验收。IPA 已核验版本 0.8.8、构建号 11、设备族 `[1,2]`、未签名及 SHA256：`20da492e703e951df89266ae75cf10514a583bd8f4359558ccc47fa8ac3ad60a`。下载 [0.8.8 未签名 IPA](https://github.com/tbslantian/YinLang/releases/download/ios-v0.8.8/YinLang-0.8.8-unsigned.ipa)，签名后安装。
 
 ## 0.8.7 歌单、封面缓存与刷新
 
