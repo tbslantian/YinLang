@@ -191,7 +191,7 @@ struct PlayerView: View {
                 Button { player.toggle() } label: { Group { if player.loading { ProgressView().tint(ink) } else { YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: tight ? 30 : compact ? 36 : 44) } }.frame(width: tight ? 44 : compact ? 57 : 70, height: tight ? 44 : compact ? 57 : 70) }.accessibilityLabel(player.playing ? "暂停" : "播放").position(x: controls.size.width / 2, y: controls.size.height / 2)
                 Button { player.next() } label: { YLIcon(systemName: "forward.end.fill", size: tight ? 24 : compact ? 28 : 33).frame(width: tight ? 44 : compact ? 50 : 62, height: tight ? 44 : compact ? 50 : 62).contentShape(Rectangle()) }.accessibilityLabel("下一首").accessibilityIdentifier("player-next").position(x: controls.size.width * 0.75, y: controls.size.height / 2)
             }.frame(height: tight ? 44 : compact ? 57 : 70)
-            if !compact { SystemVolume().tint(accent).frame(height: 28).padding(.horizontal, 10) }
+            if !compact || player.airPlayActive { SystemVolume().tint(accent).frame(height: 28).padding(.horizontal, 10) }
             HStack(spacing: 0) {
                 if player.current?.kind == "episode" { tool("gobackward.15", "后退15秒") { player.seek(player.elapsed - 15) }; tool("goforward.30", "前进30秒") { player.seek(player.elapsed + 30) } }
                 else {
@@ -348,9 +348,22 @@ struct PlayerChoice: View {
 }
 
 struct AirPlayPicker: UIViewRepresentable {
+    @EnvironmentObject private var player: Player
     var dark: Bool
-    func makeUIView(context: Context) -> AVRoutePickerView { let view = AVRoutePickerView(); view.prioritizesVideoDevices = false; return view }
-    func updateUIView(_ uiView: AVRoutePickerView, context: Context) { uiView.tintColor = dark ? .white : .darkGray; uiView.activeTintColor = .systemMint }
+    func makeCoordinator() -> Coordinator { Coordinator(player: player) }
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let view = AVRoutePickerView(); view.prioritizesVideoDevices = false; view.delegate = context.coordinator; return view
+    }
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {
+        context.coordinator.player = player; uiView.tintColor = dark ? .white : .darkGray; uiView.activeTintColor = .systemMint
+    }
+    @MainActor
+    final class Coordinator: NSObject, AVRoutePickerViewDelegate {
+        var player: Player
+        init(player: Player) { self.player = player }
+        func routePickerViewWillBeginPresentingRoutes(_ routePickerView: AVRoutePickerView) { player.prepareAirPlayRoutePicker() }
+        func routePickerViewDidEndPresentingRoutes(_ routePickerView: AVRoutePickerView) { player.refreshAirPlayRoute() }
+    }
 }
 
 struct SystemVolume: UIViewRepresentable {

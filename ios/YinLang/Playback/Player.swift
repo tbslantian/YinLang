@@ -24,6 +24,8 @@ final class Player: ObservableObject {
     @Published var showPlayer = false
     @Published var showQueue = false
     @Published var casting = false
+    @Published private(set) var audioOutputName = "本机"
+    @Published private(set) var airPlayActive = false
     let dlna = DLNA()
     private let audio = AVPlayer()
     private var clock: Timer?
@@ -34,6 +36,7 @@ final class Player: ObservableObject {
     private var itemObservation: NSKeyValueObservation?
     private var load: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
+    private var externalMetadata = ExternalPlaybackMetadata()
     private var audioInfoTask: Task<Void, Never>?
     private var cacheTask: Task<Void, Never>?
     private typealias ResolvedAudio = (URL, [String: String], String)
@@ -59,6 +62,8 @@ final class Player: ObservableObject {
     private var lastRemotePoll = Date.distantPast
     var current: MediaItem? { queue.indices.contains(index) ? queue[index] : nil }
     init() {
+        audio.allowsExternalPlayback = true
+        refreshAudioOutput()
         clock = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in Task { @MainActor in
             guard let self else { return }
 #if DEBUG
@@ -81,8 +86,9 @@ final class Player: ObservableObject {
             }
         }
         routeChange = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] notification in
-            if notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
-               UserDefaults.standard.object(forKey: "player-pause-on-unplug") as? Bool ?? true { Task { @MainActor in self?.pause() } }
+            let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            let previous = notification.userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
+            Task { @MainActor in self?.audioRouteChanged(reason: reason, previous: previous) }
         }
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.addTarget { [weak self] _ in Task { @MainActor in self?.resume() }; return .success }
@@ -130,6 +136,7 @@ final class Player: ObservableObject {
         audio.pause(); audio.replaceCurrentItem(with: nil)
         generation = UUID(); let token = generation
         loading = true; playing = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = current.source == "library" ? "正在载入音乐库音频…" : prepared == nil ? "正在解析音频…" : "正在载入已准备的音频…"
+        externalMetadata = ExternalPlaybackMetadata()
         if prepared == nil { publishResolution(ResolutionNotice(phase: .resolving, detail: current.title)) }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         if useLocal {
@@ -162,6 +169,7 @@ final class Player: ObservableObject {
                 try activateAudioSession()
                 let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
                 let item = AVPlayerItem(asset: asset)
+                item.externalMetadata = externalMetadata.items(for: current)
                 item.audioTimePitchAlgorithm = .spectral
                 AudioEffects.shared.apply()
                 if let track = try? await asset.loadTracks(withMediaType: .audio).first {
@@ -211,13 +219,16 @@ final class Player: ObservableObject {
                     }
                 }
                 artworkTask = Task { [weak self] in
-                    guard let self, let imageURL = store.artwork(current), let image = await ArtworkCache.shared.image(imageURL), self.generation == token else { return }
-                    var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-                    info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }; MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+                    guard let self, let imageURL = store.artwork(current), let image = await ArtworkCache.shared.image(imageURL), !Task.isCancelled, self.generation == token else { return }
+                    let jpeg = await Task.detached(priority: .utility) { image.jpegData(compressionQuality: 0.85) }.value
+                    guard !Task.isCancelled, self.generation == token else { return }
+                    self.externalMetadata.setArtwork(image, jpeg: jpeg)
+                    self.updateExternalMetadata(); self.updateNowPlaying()
                 }
                 if current.kind == "song" {
                     let text = await store.lyrics(current)
-                    guard generation == token else { return }; lyricText = text; lyrics = LyricLine.parse(text)
+                    guard !Task.isCancelled, generation == token else { return }; lyricText = text; lyrics = LyricLine.parse(text)
+                    externalMetadata.setLyrics(text, lines: lyrics); updateExternalMetadata()
                 }
             } catch {
                 guard generation == token, !Task.isCancelled else { return }; loading = false; status = error.localizedDescription; store.message = status
@@ -324,12 +335,46 @@ final class Player: ObservableObject {
         do {
             // Long-form playback already supports AirPlay. Explicit allowAirPlay is
             // a playAndRecord option and fails with OSStatus -50 on physical devices.
-            try session.setCategory(.playback, mode: .default, policy: .longFormAudio)
+            if session.category != .playback || session.mode != .default || session.routeSharingPolicy != .longFormAudio {
+                try session.setCategory(.playback, mode: .default, policy: .longFormAudio)
+            }
             try session.setActive(true)
+            refreshAudioOutput()
         } catch {
             let failure = error as NSError
             throw AppFailure.message("初始化音频会话失败：\(failure.localizedDescription) [\(failure.domain)/\(failure.code)]")
         }
+    }
+    func prepareAirPlayRoutePicker() {
+        guard current != nil, dlna.current == nil else { return }
+        do { try activateAudioSession(); updateExternalMetadata(); updateNowPlaying() }
+        catch { store?.message = error.localizedDescription }
+    }
+    func refreshAirPlayRoute() {
+        refreshAudioOutput(); updateExternalMetadata(); updateNowPlaying()
+    }
+    private func refreshAudioOutput() {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        let name = outputs.map(\.portName).joined(separator: "、")
+        let wireless = outputs.contains { $0.portType == .airPlay }
+        if audioOutputName != (name.isEmpty ? "本机" : name) { audioOutputName = name.isEmpty ? "本机" : name }
+        if airPlayActive != wireless { airPlayActive = wireless }
+    }
+    private func audioRouteChanged(reason: UInt?, previous: AVAudioSessionRouteDescription?) {
+        refreshAudioOutput()
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        let returnedToPhone = outputs.contains { $0.portType == .builtInSpeaker || $0.portType == .builtInReceiver }
+        let personalPorts: [AVAudioSession.Port] = [.headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .usbAudio, .airPlay]
+        let lostPersonalRoute = previous?.outputs.contains { personalPorts.contains($0.portType) } == true
+        // Replacing one external route with AirPlay is not unplugging headphones.
+        if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+           dlna.current == nil, returnedToPhone, lostPersonalRoute,
+           UserDefaults.standard.object(forKey: "player-pause-on-unplug") as? Bool ?? true { pause() }
+        refreshAirPlayRoute()
+    }
+    private func updateExternalMetadata() {
+        guard let current, dlna.current == nil else { return }
+        audio.currentItem?.externalMetadata = externalMetadata.items(for: current)
     }
     func resume() {
         if let receiver = dlna.current { playing = true; Task { _ = try? await dlna.soap(receiver, action: "Play", values: [("Speed", "1")]) }; return }
@@ -367,6 +412,7 @@ final class Player: ObservableObject {
         audioInfo = AudioStreamInfo(); resolutionNotice = nil; resolutionSucceeded = false
         if let failureObserver { NotificationCenter.default.removeObserver(failureObserver); self.failureObserver = nil }
         audio.replaceCurrentItem(with: nil); index = 0; loading = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = "选择一首喜欢的音乐"
+        externalMetadata = ExternalPlaybackMetadata()
         updateNowPlaying()
     }
     func setSleep(_ minutes: Int?) { sleepUntil = minutes.map { Date().addingTimeInterval(Double($0 * 60)) }; sleepAfterCurrent = false }
@@ -397,8 +443,14 @@ final class Player: ObservableObject {
     private func saveProgress() { if let current { UserDefaults.standard.set(elapsed, forKey: "progress:" + current.id); if current.kind == "song" { Disk.save([current], "recent-music.json") } } }
     private func updateNowPlaying() {
         guard let current else { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil; return }
-        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        var info: [String: Any] = [:]
         info[MPMediaItemPropertyTitle] = current.title; info[MPMediaItemPropertyArtist] = current.subtitle
+        info[MPMediaItemPropertyAlbumTitle] = current.kind == "episode" ? current.subtitle : current.raw.string("albumName", "album")
+        if let artwork = externalMetadata.artwork { info[MPMediaItemPropertyArtwork] = artwork }
+        info[MPNowPlayingInfoPropertyExternalContentIdentifier] = current.id
+        info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
+        info[MPNowPlayingInfoPropertyPlaybackQueueIndex] = index
+        info[MPNowPlayingInfoPropertyPlaybackQueueCount] = queue.count
         info[MPMediaItemPropertyPlaybackDuration] = duration; info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed; info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? speed : 0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }

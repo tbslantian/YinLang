@@ -2,6 +2,16 @@
 
 原生 SwiftUI 通用应用，最低 iOS / iPadOS 17。iPhone 与 iPad 使用同一套安卓页面结构，iPad 仅扩展可用宽度、封面网格列数并支持横竖屏，不增加侧栏。首页默认经典影像，直接复用安卓版 `home_music_light/dark`、`home_books_light/dark` 原图。
 
+## 0.8.19 AirPlay 输出与封面、静态歌词
+
+构建号 22。投送页显示当前系统音频输出，提供公开的系统音量控件；横屏播放器在 AirPlay 输出时也保留音量入口。选择系统音频设备前准备长音频会话，仅在类别／模式／路由策略不同才重设；输出变化后刷新设备名称与媒体信息。耳机或无线输出退回手机时保留“拔出暂停”设置，外部路由切换到 AirPlay 不再无条件暂停，DLNA 播放不受本机拔出通知影响。DLNA 与系统音频切换通过明确的停止投送按钮操作。
+
+播放项通过 `AVPlayerItem.externalMetadata` 补齐标题、歌手、专辑、JPEG 封面及公开的静态歌词字段；封面下载完成后同步更新系统正在播放信息，切歌时取消旧任务，清空队列清理元数据。封面复用已有图片缓存，不在播放进度刷新时重新编码。
+
+系统与接收设备决定封面、歌词是否显示，音频 AirPlay 不保证逐句滚动歌词；需要同步歌词时，可用系统屏幕镜像并打开播放器歌词页。侧边音量键及滑条能否控制 Apple TV 连接的电视／功放取决于接收端，应用无法强制开启。Apple TV 可在“设置 → 遥控器与设备 → 音量控制”检查自动或 HDMI（要求设备支持 CEC）。参考 [Apple 系统音量控件](https://developer.apple.com/documentation/mediaplayer/mpvolumeview)、[播放项附加元数据](https://developer.apple.com/documentation/avfoundation/avplayeritem/externalmetadata)和[Apple TV 音量控制](https://support.apple.com/guide/tv/control-your-tv-and-volume-atvbbe2477c9/tvos)。
+
+本版未做 Apple TV 真机验收。沿用用户要求：不运行测试，启动 iPhone／iPad 通用设备 Release 编译后结束，不等待构建完成、不发布下载链接。
+
 ## 0.8.18 恢复直接长按拖动，编辑入口移入歌单
 
 构建号 21。按用户要求恢复 0.8.14（build 17）的直接长按拖动方式：使用原 `UILongPressGestureRecognizer`，保持约 0.32 秒后抓取原尺寸快照并跟随手指。移除系统上下文菜单、三秒计时器和非独占触摸观察器，保留原边缘自动滚动、松手保存本账号顺序、取消恢复顺序及松手后防误打开。仅保留后来新增的卡片网格坐标适配，卡片／列表切换与已保存顺序继续使用。

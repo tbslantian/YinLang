@@ -8,7 +8,16 @@ struct CastView: View {
     var body: some View {
         NavigationStack {
             AndroidForm {
-                AndroidSection("AirPlay") { HStack { Label("选择系统音频设备", systemImage: "airplayaudio"); Spacer(); AirPlayPicker(dark: false).frame(width: 44, height: 44) } }
+                AndroidSection("AirPlay") {
+                    HStack { Label("选择系统音频设备", systemImage: "airplayaudio"); Spacer(); AirPlayPicker(dark: false).frame(width: 44, height: 44).disabled(dlna.current != nil) }
+                    Text("当前系统输出：" + player.audioOutputName).font(.system(size: 13)).foregroundStyle(Palette.muted)
+                    SystemVolume().frame(minHeight: 44).accessibilityLabel("系统输出音量").disabled(dlna.current != nil)
+                    Text("Apple TV 音量不可调时，请用电视或功放遥控器；也可在 Apple TV“设置 → 遥控器与设备 → 音量控制”中检查自动或 HDMI 设置。").font(.caption).foregroundStyle(Palette.muted)
+                    if dlna.current != nil { Button("停止 DLNA，切回系统音频") { Task { await player.stopCasting() } } }
+                }
+                AndroidSection("封面与歌词") {
+                    Text("封面和歌曲信息由接收设备显示。歌词提供静态文本，接收设备可能不显示；观看同步歌词可使用系统屏幕镜像，并打开播放器歌词页。").font(.caption).foregroundStyle(Palette.muted)
+                }
                 AndroidSection("DLNA 音频设备") {
                     Button("搜索局域网设备") { Task { await dlna.search() } }.disabled(dlna.searching)
                     TextField("设备描述地址，例如 http://192.168.1.10:端口/description.xml", text: $address).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
