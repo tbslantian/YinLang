@@ -35,7 +35,11 @@ enum UITestFixtures {
         if player.current != nil { player.audioInfo = AudioStreamInfo(format: "FLAC", bitsPerSecond: 960000, sampleRate: 96000) }
         if ProcessInfo.processInfo.arguments.contains("-ui-mini-loading") { player.loading = true; player.publishResolution(ResolutionNotice(phase: .resolving, detail: "测试音源 · 网易云 · 320k")) }
     }
-    static func catalog(_ operation: String, args: JSONObject = [:]) -> JSONObject {
+    static func catalog(_ operation: String, args: JSONObject = [:], refresh: Bool = false) -> JSONObject {
+        if operation == "chart", refresh, ProcessInfo.processInfo.arguments.contains("-ui-refresh-audit") {
+            var updated = songs[0]; updated["name"] = "刷新后的榜单歌曲"; updated["title"] = updated["name"]
+            return ["list": [updated] + Array(songs.dropFirst()), "more": false]
+        }
         if operation == "list", ProcessInfo.processInfo.arguments.contains("-ui-bottom-audit") {
             let page = args["page"] as? Int ?? 1
             let items = songs.map { row -> JSONObject in
@@ -58,6 +62,10 @@ enum UITestFixtures {
         case "getScanStatus": return ["scanStatus":["count":8,"scanning":false]]
         case "getPlaylists":
             let rows = ProcessInfo.processInfo.arguments.contains("-ui-many-playlists") ? (1...24).map { index -> JSONObject in var row = playlists[(index - 1) % 4]; row["id"] = "playlist-\(index)"; return row } : playlists
+            if ProcessInfo.processInfo.arguments.contains("-ui-shared-playlists") {
+                var other = playlists[0]; other["id"] = "shared-1"; other["name"] = "其他用户的共享歌单"; other["owner"] = "other"; other["public"] = true
+                return ["playlists":["playlist":rows + [other]]]
+            }
             return ["playlists":["playlist":rows]]
         case "getPlaylist": var row = playlists[0]; row["entry"] = songs; return ["playlist":row]
         case "getRandomSongs": return ["randomSongs":["song":songs]]
@@ -89,6 +97,7 @@ struct UITestScreen: View {
         case "charts": CatalogView(mode:"charts")
         case "playlists": CatalogView(mode:"lists")
         case "playlist-detail": CatalogDetailView(item:MediaItem(UITestFixtures.playlists[0],kind:"playlist"),chart:false)
+        case "chart-detail": CatalogDetailView(item:MediaItem(["id":"wy__19723756", "bangid":"19723756", "name":"飙升榜", "source":"wy"],kind:"chart"),chart:true)
         case "liked": SavedView(title:"我喜欢的音乐",type:"liked")
         case "library": LibraryView()
         case "discovery": LibraryDiscoveryView()

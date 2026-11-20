@@ -9,7 +9,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
     var frames: [String: CGRect]
     var begin: (String) -> Void
     var move: (String, Int) -> Void
-    var end: () -> Void
+    var end: (Bool) -> Void
     var report: (String) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> Anchor {
@@ -151,7 +151,8 @@ struct PlaylistReorderGesture: UIViewRepresentable {
                 let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
                 link.add(to: .main, forMode: .common); displayLink = link
             case .changed: updatePosition()
-            case .ended, .cancelled, .failed: finish()
+            case .ended: finish(dropped: true)
+            case .cancelled, .failed: finish(dropped: false)
             default: break
             }
         }
@@ -191,7 +192,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             }
             updatePosition()
         }
-        private func finish() {
+        private func finish(dropped: Bool) {
             guard key != nil, let anchor, let window = anchor.window, let lifted else { return }
             displayLink?.invalidate(); displayLink = nil; settling = true
             key = nil
@@ -205,7 +206,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
                 lifted.frame = destination; lifted.layer.shadowOpacity = 0
             } completion: { [weak self] _ in
                 guard let self else { lifted.removeFromSuperview(); return }
-                self.parent.end(); lifted.removeFromSuperview(); self.lifted = nil; self.settling = false
+                self.parent.end(dropped); lifted.removeFromSuperview(); self.lifted = nil; self.settling = false
             }
         }
     }

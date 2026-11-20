@@ -121,9 +121,7 @@ private struct EntryCover: View {
 #if DEBUG
                 if UITestFixtures.active, url.scheme == "fixture" { image = Image(String(url.absoluteString.dropFirst("fixture:".count))); return }
 #endif
-                var request = URLRequest(url: url); request.timeoutInterval = 15
-                if let (data, response) = try? await URLSession.shared.data(for: request),
-                   (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? 0), let bitmap = UIImage(data: data) {
+                if let bitmap = await ArtworkCache.shared.image(url) {
                     guard !Task.isCancelled else { return }; image = Image(uiImage: bitmap); return
                 }
             }

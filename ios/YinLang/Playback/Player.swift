@@ -125,12 +125,12 @@ final class Player: ObservableObject {
     private func start(useLocal: Bool = true, resumeAt: Double? = nil, prepared: Task<ResolvedAudio, Error>? = nil, allowCacheWrites: Bool = true) {
         guard let current, let store else { return }
         load?.cancel(); artworkTask?.cancel(); audioInfoTask?.cancel(); cacheTask?.cancel(); cancelPreparation(); itemObservation = nil
-        noticeTask?.cancel(); resolutionNotice = nil; resolutionSucceeded = false; audioInfo = AudioStreamInfo()
+        noticeTask?.cancel(); resolutionNotice = nil; resolutionSucceeded = prepared != nil; audioInfo = AudioStreamInfo()
         if let failureObserver { NotificationCenter.default.removeObserver(failureObserver); self.failureObserver = nil }
         audio.pause(); audio.replaceCurrentItem(with: nil)
         generation = UUID(); let token = generation
-        loading = true; playing = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = "正在解析音频…"
-        publishResolution(ResolutionNotice(phase: .resolving, detail: current.title))
+        loading = true; playing = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = prepared == nil ? "正在解析音频…" : "正在载入已准备的音频…"
+        if prepared == nil { publishResolution(ResolutionNotice(phase: .resolving, detail: current.title)) }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         if useLocal {
             if current.kind == "episode" { speed = UserDefaults.standard.float(forKey: "speed:" + current.raw.string("_book")); if speed < 0.25 { speed = 1 } }
@@ -145,7 +145,11 @@ final class Player: ObservableObject {
                 let resolved: ResolvedAudio
                 if let prepared {
                     do { resolved = try await withTaskCancellationHandler(operation: { try await prepared.value }, onCancel: { prepared.cancel() }) }
-                    catch { try Task.checkCancellation(); resolved = try await store.resolve(current, useLocal: useLocal, progress: progress) }
+                    catch {
+                        try Task.checkCancellation(); resolutionSucceeded = false
+                        publishResolution(ResolutionNotice(phase: .resolving, detail: current.title))
+                        resolved = try await store.resolve(current, useLocal: useLocal, progress: progress)
+                    }
                 } else { resolved = try await store.resolve(current, useLocal: useLocal, progress: progress) }
                 let (url, headers, source) = resolved
                 try Task.checkCancellation(); guard generation == token else { return }
@@ -201,7 +205,7 @@ final class Player: ObservableObject {
                     }
                 }
                 artworkTask = Task { [weak self] in
-                    guard let self, let imageURL = store.artwork(current), let (data, _) = try? await URLSession.shared.data(from: imageURL), let image = UIImage(data: data), self.generation == token else { return }
+                    guard let self, let imageURL = store.artwork(current), let image = await ArtworkCache.shared.image(imageURL), self.generation == token else { return }
                     var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
                     info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }; MPNowPlayingInfoCenter.default().nowPlayingInfo = info
                 }

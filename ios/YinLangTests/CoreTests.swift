@@ -1,8 +1,58 @@
 import XCTest
 import Network
+import UIKit
 @testable import YinLang
 
 final class CoreTests: XCTestCase {
+    func testLibraryTrackSortMatchesAndroidFieldsDirectionAndMissingDates() {
+        let a = MediaItem(["id":"a", "title":"Alpha", "artist":"Z", "album":"One", "created":"2020-01-01", "duration":120],source:"library")
+        let b = MediaItem(["id":"b", "title":"Beta", "artist":"A", "album":"Two", "created":"2021-01-01", "playlistAddedAt":"2025-02-01T10:00:00.000Z", "duration":60],source:"library")
+        let unknown = MediaItem(["id":"c", "title":"Gamma", "artist":"A", "album":"Two", "duration":180],source:"library")
+        let rows = [unknown, a, b]
+        XCTAssertEqual(LibraryTrackSort.original.apply(rows, descending:true).map(\.key), ["c","a","b"])
+        XCTAssertEqual(LibraryTrackSort.added.apply(rows, descending:true).map(\.key), ["b","a","c"])
+        XCTAssertEqual(LibraryTrackSort.added.apply(rows, descending:false).map(\.key), ["a","b","c"])
+        XCTAssertEqual(LibraryTrackSort.name.apply(rows, descending:false).map(\.key), ["a","b","c"])
+        XCTAssertEqual(LibraryTrackSort.artist.apply(rows, descending:false).map(\.key), ["b","c","a"])
+        XCTAssertEqual(LibraryTrackSort.album.apply(rows, descending:true).map(\.key), ["c","b","a"])
+        XCTAssertEqual(LibraryTrackSort.duration.apply(rows, descending:false).map(\.key), ["b","a","c"])
+        XCTAssertNotNil(LibraryTrackSort.playlistDate(b))
+    }
+    func testLibraryPlaylistOwnershipMatchesAndroid() {
+        let nav = Navidrome(base: "https://example.com", user: "Alice", password: "")
+        XCTAssertTrue(nav.ownsPlaylist(["id":"mine", "owner":"alice"]))
+        XCTAssertTrue(nav.ownsPlaylist(["id":"legacy"]))
+        XCTAssertFalse(nav.ownsPlaylist(["id":"shared", "owner":"Bob", "public":true]))
+    }
+    @MainActor func testArtworkCachePersistsDeduplicatesAndIgnoresNavidromeSalt() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8))
+        let png = renderer.pngData { context in UIColor.red.setFill(); context.fill(CGRect(x: 0, y: 0, width: 8, height: 8)) }
+        ArtworkFixtureProtocol.reset(png)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [ArtworkFixtureProtocol.self]
+        let session = URLSession(configuration: config); defer { session.invalidateAndCancel() }
+        let url = URL(string: "https://images.example.com/rest/getCoverArt.view?u=alice&id=album&size=400&t=one&s=first")!
+        let rotated = URL(string: "https://images.example.com/rest/getCoverArt.view?u=alice&id=album&size=400&t=two&s=second")!
+        let cache = ArtworkCache(directory: folder, session: session)
+        async let first = cache.image(url)
+        async let concurrent = cache.image(rotated)
+        let pair = await (first, concurrent)
+        XCTAssertNotNil(pair.0); XCTAssertNotNil(pair.1); XCTAssertEqual(ArtworkFixtureProtocol.calls, 1)
+        XCTAssertNotNil(cache.memoryImage(rotated))
+        let relaunched = ArtworkCache(directory: folder, session: session)
+        let disk = await relaunched.image(rotated)
+        XCTAssertNotNil(disk); XCTAssertEqual(ArtworkFixtureProtocol.calls, 1, "重进页面或重启必须读取持久缓存")
+        let other = URL(string: "https://images.example.com/rest/getCoverArt.view?u=bob&id=album&size=400&t=two&s=second")!
+        XCTAssertNotEqual(ArtworkCache.key(url), ArtworkCache.key(other))
+        let otherImage = await relaunched.image(other)
+        XCTAssertNotNil(otherImage); XCTAssertEqual(ArtworkFixtureProtocol.calls, 2)
+        let online = URL(string: "https://images.example.com/playlist.jpg")!
+        let onlineImage = await cache.image(online)
+        XCTAssertNotNil(onlineImage)
+        let onlineRelaunch = await ArtworkCache(directory: folder, session: session).image(online)
+        XCTAssertNotNil(onlineRelaunch); XCTAssertEqual(ArtworkFixtureProtocol.calls, 3, "在线封面同样持久缓存")
+    }
     func testNavidromeCoverURLStaysStableAndSeparatesCredentials() throws {
         let base = "https://" + UUID().uuidString + ".example.com"
         let account = Navidrome(base: base, user: "first", password: "secret")

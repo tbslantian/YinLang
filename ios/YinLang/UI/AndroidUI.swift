@@ -250,13 +250,26 @@ struct RemoteImage<Content: View, Placeholder: View>: View {
     var url: URL?
     var content: (Image) -> Content
     var placeholder: () -> Placeholder
+    @State private var loaded: UIImage?
+    @State private var loadedURL: URL?
     init(url: URL?, @ViewBuilder content: @escaping (Image) -> Content, @ViewBuilder placeholder: @escaping () -> Placeholder) { self.url = url; self.content = content; self.placeholder = placeholder }
     var body: some View {
 #if DEBUG
         if UITestFixtures.active, let url, url.scheme == "fixture" { content(Image(String(url.absoluteString.dropFirst("fixture:".count)))) }
-        else { AsyncImage(url: url, content: content, placeholder: placeholder) }
+        else { cachedImage }
 #else
-        AsyncImage(url: url, content: content, placeholder: placeholder)
+        cachedImage
 #endif
+    }
+    private var cachedImage: some View {
+        Group {
+            if let url, let image = (loadedURL == url ? loaded : nil) ?? ArtworkCache.shared.memoryImage(url) { content(Image(uiImage: image)) }
+            else { placeholder() }
+        }.task(id: url) {
+            guard let url else { loaded = nil; loadedURL = nil; return }
+            let image = await ArtworkCache.shared.image(url)
+            guard !Task.isCancelled else { return }
+            loadedURL = url; loaded = image
+        }
     }
 }

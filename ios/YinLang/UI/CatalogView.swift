@@ -157,12 +157,20 @@ struct CatalogDetailView: View {
     @State private var page = 1
     @State private var more = false
     @State private var query = ""
+    @State private var refreshQueued = false
+    @State private var refreshed = false
     var filtered: [MediaItem] { query.isEmpty ? rows : rows.filter { ($0.title + $0.subtitle).localizedCaseInsensitiveContains(query) } }
     var body: some View {
         AndroidList {
             if !chart { Button(store.followed.contains(where: { $0.id == item.id }) ? "取消关注" : "关注歌单") { store.toggleFollow(item) }.buttonStyle(AndroidButtonStyle()) }
             AndroidSearch(text: $query, hint: "在当前列表中查找歌曲")
-            HStack(spacing: 9) { Button { player.play(filtered) } label: { Text("播放全部").frame(maxWidth: .infinity) }.buttonStyle(AndroidButtonStyle(primary: true)).disabled(rows.isEmpty); Button { Task { await load(refresh: true) } } label: { YLIcon(systemName: "arrow.clockwise").frame(width: 44, height: 44).foregroundStyle(Palette.accent) }.accessibilityLabel("刷新列表") }
+            HStack(spacing: 9) {
+                Button { player.play(filtered) } label: { Text("播放全部").frame(maxWidth: .infinity) }.buttonStyle(AndroidButtonStyle(primary: true)).disabled(rows.isEmpty)
+                Button { Task { await load(refresh: true) } } label: {
+                    Group { if loading { ProgressView().tint(Palette.accent) } else { YLIcon(systemName: "arrow.clockwise") } }.frame(width: 44, height: 44).foregroundStyle(Palette.accent).contentShape(Rectangle())
+                }.accessibilityLabel("刷新列表").accessibilityIdentifier("catalog-detail-refresh")
+            }
+            if refreshed && !loading { Text("已刷新 · \(rows.count) 首歌曲").font(.system(size: 13)).foregroundStyle(Palette.muted).accessibilityIdentifier("catalog-detail-refreshed") }
             ForEach(Array(filtered.enumerated()), id: \.offset) { position, song in SongRow(item: song, rank: chart ? position + 1 : nil) { player.play(filtered, at: position) } }
             if loading { ProgressView().frame(maxWidth: .infinity) }
             if !error.isEmpty { ErrorPanel(text: error) { Task { await load(refresh: true) } } }
@@ -170,12 +178,17 @@ struct CatalogDetailView: View {
         }.androidPage(item.title, category: Platform(rawValue: item.source)?.title ?? "在线音乐").task { if rows.isEmpty { await load() } }.refreshable { await load(refresh: true) }
     }
     private func load(next: Bool = false, refresh: Bool = false) async {
-        guard !loading else { return }; loading = true; error = ""; defer { loading = false }
+        if loading { if refresh { refreshQueued = true }; return }
+        loading = true; error = ""; if refresh { refreshed = false }
         do {
             let requested = next ? page + 1 : 1
             let result = try await store.catalog(chart ? "chart" : "list", ["source": item.source, "id": item.catalogID, "page": requested], refresh: refresh)
             let items = result.rows("list").map { MediaItem($0) }
+            try Task.checkCancellation()
             if !next { rows = [] }; let ids = Set(rows.map(\.id)); rows += items.filter { !ids.contains($0.id) }; page = requested; more = result["more"] as? Bool ?? false
+            if refresh { refreshed = true }
         } catch { self.error = error.localizedDescription }
+        loading = false
+        if refreshQueued && !Task.isCancelled { refreshQueued = false; await load(refresh: true) }
     }
 }

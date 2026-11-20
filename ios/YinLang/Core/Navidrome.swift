@@ -49,6 +49,10 @@ struct Navidrome {
         var seen: Set<String> = []
         return Array(rows.map { $0.string("coverArt") }.filter { !$0.isEmpty && seen.insert($0).inserted }.prefix(6))
     }
+    func ownsPlaylist(_ playlist: JSONObject) -> Bool {
+        let owner = playlist.string("owner")
+        return owner.isEmpty || owner.caseInsensitiveCompare(user) == .orderedSame
+    }
     func canEdit(_ playlist: JSONObject) -> Bool {
         if let readOnly = playlist["readonly"] as? Bool { return !readOnly }
         let owner = playlist.string("owner").trimmingCharacters(in: .whitespacesAndNewlines)

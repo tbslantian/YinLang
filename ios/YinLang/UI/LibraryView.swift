@@ -10,6 +10,7 @@ struct LibraryView: View {
     @State private var songCount: Int?
     @State private var countAccount = ""
     @State private var navigationWidth: CGFloat = 360
+    @State private var shared = false
     private var shortcutHeight: CGFloat { max(72, min(104, navigationWidth * 0.085)) }
     private var navigationHeight: CGFloat { shortcutHeight * 3 + 16 }
     private var orderKey: String { "playlist-order:" + (store.nav?.identity ?? "") }
@@ -37,16 +38,29 @@ struct LibraryView: View {
                     }.frame(width: proxy.size.width, height: proxy.size.height)
                         .onAppear { navigationWidth = proxy.size.width }.onChange(of: proxy.size.width) { _, width in navigationWidth = width }
                 }.frame(height: navigationHeight).buttonStyle(.plain)
-                HStack { SectionTitle(title: "我的歌单"); Button { create = true } label: { YLIcon(systemName: "plus").frame(width: 44, height: 44) }.accessibilityLabel("创建服务器歌单") }
-                if !error.isEmpty { ErrorPanel(text: error) { Task { await load() } } }
-                if playlists.isEmpty && error.isEmpty { Text("还没有服务器歌单").font(.system(size: 13)).foregroundStyle(Palette.muted) }
-                LibraryPlaylistRows(items: $playlists) { UserDefaults.standard.set(playlists.map(\.key), forKey: orderKey) }
+                playlistSection
             }
         }.androidPage("音乐库", category: "音乐") { NavigationLink { ConnectionView() } label: { Image("navidrome_logo").resizable().scaledToFit().frame(width: 34, height: 34).frame(width: 48, height: 48) }.accessibilityLabel("音乐库连接与音质设置") }
             .task(id: store.connectionRevision) { await load() }.refreshable { await load() }
             .alert("创建歌单", isPresented: $create) { TextField("歌单名称", text: $name); Button("创建") { Task { do { guard let nav = store.nav, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }; _ = try await nav.get("createPlaylist", [.init(name: "name", value: name)]); name = ""; await load() } catch { store.message = error.localizedDescription } } }; Button("取消", role: .cancel) {} }
     }
+    @ViewBuilder private var playlistSection: some View {
+                HStack(spacing: 6) {
+                    Button("我的歌单") { shared = false }.buttonStyle(AndroidButtonStyle(primary: !shared)).accessibilityIdentifier("library-own-tab").accessibilityAddTraits(!shared ? .isSelected : [])
+                    Button("共享歌单") { shared = true }.buttonStyle(AndroidButtonStyle(primary: shared)).accessibilityIdentifier("library-shared-tab").accessibilityAddTraits(shared ? .isSelected : [])
+                    Button("创建歌单") { create = true }.buttonStyle(AndroidButtonStyle()).accessibilityIdentifier("library-create-playlist")
+                }.padding(.top, 8)
+                if !error.isEmpty { ErrorPanel(text: error) { Task { await load() } } }
+                let visible = playlists.filter { isOwn($0) != shared }
+                if visible.isEmpty && error.isEmpty { Text(shared ? "暂无其他用户共享的歌单。" : "此账户暂无歌单。").font(.system(size: 13)).foregroundStyle(Palette.muted) }
+                if !shared && !visible.isEmpty { Text("长按歌单拖动排序，点右侧 ⋯ 编辑或删除。").font(.system(size: 13)).foregroundStyle(Palette.muted) }
+                LibraryPlaylistRows(items: Binding(get: { playlists.filter { isOwn($0) != shared } }, set: { rows in
+                    playlists = rows + playlists.filter { isOwn($0) == shared }
+                }), reorderable: !shared) { UserDefaults.standard.set(playlists.filter(isOwn).map(\.key), forKey: orderKey) }
+                    .id(shared)
+    }
     private func smallLink(_ title: String, icon: String, kind: String) -> some View { NavigationLink { LibraryListView(kind: kind, title: title) } label: { LibraryShortcut(title: title, icon: icon, height: shortcutHeight) }.accessibilityIdentifier("library-" + kind + "-shortcut") }
+    private func isOwn(_ item: MediaItem) -> Bool { store.nav?.ownsPlaylist(item.raw) == true }
     private func load() async {
         guard let nav = store.nav else { playlists = []; songCount = nil; countAccount = ""; return }; error = ""
         if countAccount != nav.identity { songCount = nil; countAccount = nav.identity }
@@ -56,7 +70,11 @@ struct LibraryView: View {
             guard !Task.isCancelled, store.nav?.identity == nav.identity else { return }
             let rows = result.map { store.libraryItem($0, kind: "playlist") }
             let order = UserDefaults.standard.stringArray(forKey: orderKey) ?? []
-            playlists = rows.sorted { (order.firstIndex(of: $0.key) ?? Int.max) < (order.firstIndex(of: $1.key) ?? Int.max) }
+            let own = rows.filter { nav.ownsPlaylist($0.raw) }.enumerated().sorted {
+                let left = order.firstIndex(of: $0.element.key) ?? Int.max, right = order.firstIndex(of: $1.element.key) ?? Int.max
+                return left == right ? $0.offset < $1.offset : left < right
+            }.map(\.element)
+            playlists = own + rows.filter { !nav.ownsPlaylist($0.raw) }
         } catch { if !Task.isCancelled, store.nav?.identity == nav.identity { self.error = error.localizedDescription } }
         let count = await total
         guard !Task.isCancelled, store.nav?.identity == nav.identity else { return }
@@ -66,36 +84,47 @@ struct LibraryView: View {
 
 private struct LibraryPlaylistRows: View {
     @Binding var items: [MediaItem]
+    var reorderable: Bool
     var save: () -> Void
     @State private var frames: [String: CGRect] = [:]
     @State private var dragging: String?
+    @State private var suppressOpenUntil = Date.distantPast
+    @State private var opened: MediaItem?
+    @State private var editing: MediaItem?
+    @State private var original: [MediaItem] = []
 #if DEBUG
     @State private var reorderAudit = "idle"
 #endif
     var body: some View {
         VStack(spacing: 16) {
             ForEach(items) { item in
-                LibraryPlaylistRow(item: item).opacity(dragging == item.key ? 0 : 1)
+                LibraryPlaylistRow(item: item, editable: reorderable, open: { if canOpen { opened = item } }, edit: { if canOpen { editing = item } }).opacity(dragging == item.key ? 0.35 : 1)
                     .background { GeometryReader { proxy in Color.clear.preference(key: PlaylistRowFrames.self, value: [item.key: proxy.frame(in: .named("library-playlists"))]) } }
             }
         }.coordinateSpace(name: "library-playlists")
             .onPreferenceChange(PlaylistRowFrames.self) { frames = $0 }
             .background {
-                PlaylistReorderGesture(keys: items.map(\.key), frames: frames, begin: { dragging = $0 }, move: { key, index in
+                if reorderable && opened == nil && editing == nil { PlaylistReorderGesture(keys: items.map(\.key), frames: frames, begin: { original = items; dragging = $0; suppressOpenUntil = .distantFuture }, move: { key, index in
                     guard let from = items.firstIndex(where: { $0.key == key }), from != index, items.indices.contains(index) else { return }
                     withAnimation(.easeInOut(duration: 0.16)) { items.move(fromOffsets: IndexSet(integer: from), toOffset: index > from ? index + 1 : index) }
-                }, end: { dragging = nil; save() }, report: { value in
+                }, end: { dropped in
+                    dragging = nil; suppressOpenUntil = Date().addingTimeInterval(0.5)
+                    if dropped { save() } else { items = original }; original = []
+                }, report: { value in
 #if DEBUG
                     reorderAudit = value
 #endif
-                })
+                }) }
             }
+            .navigationDestination(item: $opened) { item in LibraryListView(kind: "playlist", identifier: item.key, title: item.title) }
+            .navigationDestination(item: $editing) { item in PlaylistEditor(item: item) }
 #if DEBUG
             .overlay(alignment: .topLeading) {
                 if UITestFixtures.active { Text(" ").font(.system(size: 1)).accessibilityLabel("拖动检查").accessibilityValue(reorderAudit).accessibilityIdentifier("library-reorder-audit").allowsHitTesting(false) }
             }
 #endif
     }
+    private var canOpen: Bool { dragging == nil && Date() >= suppressOpenUntil }
 }
 
 private struct PlaylistRowFrames: PreferenceKey {
@@ -105,22 +134,30 @@ private struct PlaylistRowFrames: PreferenceKey {
 
 private struct LibraryPlaylistRow: View {
     let item: MediaItem
+    var editable: Bool
+    var open: () -> Void
+    var edit: () -> Void
     private var label: some View {
         HStack(spacing: 12) {
             Artwork(item: item)
             VStack(alignment: .leading, spacing: 5) {
                 Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1)
-                Text("\(item.raw.string("songCount")) 首歌曲").font(.system(size: 13)).foregroundStyle(Palette.muted)
+                Text(detail).font(.system(size: 13)).foregroundStyle(Palette.muted)
             }
             Spacer(minLength: 0)
         }.padding(11).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
     }
+    private var detail: String {
+        let stamp = item.raw.string("changed", "created")
+        let day = stamp.count >= 10 ? String(stamp.prefix(10)) : ""
+        return "\(item.raw.string("songCount")) 首歌曲" + (day.isEmpty ? "" : " · 更新于 " + day)
+    }
     private var menuIcon: some View { YLIcon(systemName: "ellipsis", size: 19).foregroundStyle(Palette.accent).frame(width: 48, height: 48).contentShape(Rectangle()) }
     var body: some View {
         HStack(spacing: 0) {
-            NavigationLink { LibraryListView(kind: "playlist", identifier: item.key, title: item.title) } label: { label }
+            Button(action: open) { label }
                 .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("library-playlist-open-" + item.key)
-            NavigationLink { PlaylistEditor(item: item) } label: { menuIcon }.accessibilityLabel("歌单操作")
+            if editable { Button(action: edit) { menuIcon }.accessibilityLabel("歌单操作").accessibilityIdentifier("library-playlist-edit-" + item.key) }
         }.frame(maxWidth: .infinity).androidSurface().buttonStyle(.plain)
     }
 }
@@ -241,18 +278,28 @@ struct LibraryListView: View {
     @State private var offset = 0
     @State private var more = false
     @State private var sort = "original"
+    @State private var descending = true
+    @State private var chooseSort = false
     @State private var removeIndex: Int?
     var isSongs: Bool { ["songs", "discoverySongs", "favorites", "album", "playlist"].contains(kind) }
     var displayed: [MediaItem] {
         let filtered = query.isEmpty ? rows : rows.filter { ($0.title + $0.subtitle).localizedCaseInsensitiveContains(query) }
-        if sort == "name" { return filtered.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending } }
-        if sort == "artist" { return filtered.sorted { $0.subtitle.localizedStandardCompare($1.subtitle) == .orderedAscending } }
-        return filtered
+        return (LibraryTrackSort(rawValue: sort) ?? .original).apply(filtered, descending: kind == "playlist" ? descending : false)
     }
+    private var sortKey: String { "library-track-order:" + (store.nav?.identity ?? "") + ":" + identifier }
+    private var dateTitle: String { rows.contains(where: { LibraryTrackSort.playlistDate($0) != nil }) ? "加入歌单日期" : "加入资料库日期" }
+    private var sortOptions: [LibraryTrackSort] { LibraryTrackSort.allCases.filter { $0 != .added || rows.contains(where: { LibraryTrackSort.date($0) != nil }) } }
+    private var sortTitle: String { let selection = LibraryTrackSort(rawValue: sort) ?? .original; return selection == .added ? dateTitle : selection.title }
     var body: some View {
         AndroidList {
             AndroidSearch(text: $query, hint: "在列表中搜索")
-            HStack { if isSongs { AndroidChoice(title: "排序", selection: $sort, options: [("original", "原始顺序"),("name", "歌曲名称"),("artist", "艺术家")]) }; Spacer(); Button { Task { await load() } } label: { YLIcon(systemName: "arrow.clockwise", size: 19).frame(width: 44, height: 44) }.accessibilityLabel("刷新歌单") }
+            HStack {
+                if kind == "playlist" { Text(sortTitle + (sort == "original" ? "" : descending ? " ↓" : " ↑")).font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.muted).accessibilityIdentifier("library-track-sort-label") }
+                else if isSongs { AndroidChoice(title: "排序", selection: $sort, options: [("original", "原始顺序"),("name", "歌曲名称"),("artist", "艺术家")]) }
+                Spacer()
+                Button { Task { await load() } } label: { YLIcon(systemName: "arrow.clockwise", size: 19).frame(width: 44, height: 44).contentShape(Rectangle()) }.accessibilityLabel("刷新歌单")
+                if kind == "playlist" { Button { chooseSort = true } label: { YLIcon(systemName: "arrow.up.arrow.down", size: 20).frame(width: 44, height: 44).contentShape(Rectangle()) }.accessibilityLabel("排列歌曲").accessibilityIdentifier("library-track-sort") }
+            }
 
             if store.nav == nil { NavigationLink("连接音乐库") { ConnectionView() } }
             if isSongs && !rows.isEmpty { Button("播放全部（\(displayed.count)）", systemImage: "play.fill") { player.play(displayed) } }
@@ -272,7 +319,20 @@ struct LibraryListView: View {
             if more && !loading { Button("加载更多") { Task { await load(next: true) } } }
             if !loading && rows.isEmpty && error.isEmpty && store.nav != nil { ErrorPanel(text: "音乐库里暂无内容") }
         }.androidPage(title, category: "音乐库")
-.task { if rows.isEmpty { await load() } }.refreshable { await load() }
+.task {
+                if kind == "playlist" { sort = UserDefaults.standard.string(forKey: sortKey) ?? "original"; descending = UserDefaults.standard.object(forKey: sortKey + ":descending") as? Bool ?? true }
+                if rows.isEmpty { await load() }
+            }.refreshable { await load() }
+            .onChange(of: sort) { _, value in if kind == "playlist" { UserDefaults.standard.set(value, forKey: sortKey) } }
+            .onChange(of: descending) { _, value in if kind == "playlist" { UserDefaults.standard.set(value, forKey: sortKey + ":descending") } }
+            .sheet(isPresented: $chooseSort) {
+                NavigationStack { AndroidForm {
+                    ForEach(sortOptions, id: \.rawValue) { option in
+                        Button { sort = option.rawValue; chooseSort = false } label: { HStack { Text(sort == option.rawValue ? "✓" : "").frame(width: 28); Text(option == .added ? dateTitle : option.title); Spacer() }.frame(minHeight: 44).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityIdentifier("library-track-sort-" + option.rawValue)
+                    }
+                    Button(descending ? "改为升序" : "改为降序") { descending.toggle(); chooseSort = false }.buttonStyle(AndroidButtonStyle())
+                }.androidPage("排列歌曲", category: "") }.presentationDetents([.medium, .large])
+            }
             .confirmationDialog("从歌单中移出这首歌？", isPresented: Binding(get: { removeIndex != nil }, set: { if !$0 { removeIndex = nil } }), titleVisibility: .visible) {
                 Button("移出歌单", role: .destructive) { let position = removeIndex; removeIndex = nil; Task { guard let position, let nav = store.nav else { return }; do { try await nav.remove(identifier, expected: original, position: position); await load() } catch { store.message = error.localizedDescription } } }
             } message: { Text("歌曲文件会保留在音乐库中。") }

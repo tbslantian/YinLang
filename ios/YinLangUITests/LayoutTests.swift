@@ -250,6 +250,8 @@ final class LayoutTests: XCTestCase {
         let start = first.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5))
         let bottom = app.scrollViews.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.96))
         start.press(forDuration: 0.5, thenDragTo: bottom, withVelocity: .slow, thenHoldForDuration: 1.0)
+        XCTAssertTrue(app.staticTexts["page-title-音乐库"].exists, "拖动松手必须留在音乐库，不能进入歌单")
+        XCTAssertFalse(app.staticTexts["page-title-华语经典"].exists)
         let audit = app.descendants(matching: .any).matching(identifier: "library-reorder-audit").firstMatch
         XCTAssertTrue(audit.waitForExistence(timeout: 5))
         let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in (audit.value as? String ?? "").split(separator: ",").count == 5 }, object: audit)
@@ -271,6 +273,55 @@ final class LayoutTests: XCTestCase {
         XCTAssertGreaterThan(restored.frame.minY, second.frame.minY, "重启后必须保留排序")
         second.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).tap()
         XCTAssertTrue(app.staticTexts["page-title-随心听"].waitForExistence(timeout: 5))
+    }
+    @MainActor func testLibraryPlaylistTabsAndCreationMatchAndroid() throws {
+        let app = launch("library", extraArguments: ["-ui-shared-playlists", "-ui-reset-library-order"])
+        let own = app.buttons["library-own-tab"].firstMatch
+        for _ in 0..<4 {
+            if own.exists && own.isHittable { break }
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(own.isSelected)
+        XCTAssertTrue(app.buttons["library-playlist-edit-playlist-1"].exists)
+        XCTAssertFalse(app.buttons["library-playlist-open-shared-1"].exists)
+        let shared = app.buttons["library-shared-tab"].firstMatch
+        shared.tap()
+        XCTAssertTrue(shared.isSelected)
+        XCTAssertTrue(app.buttons["library-playlist-open-shared-1"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["library-playlist-edit-shared-1"].exists)
+        XCTAssertFalse(app.buttons["library-playlist-open-playlist-1"].exists)
+        capture("library-android-shared-tab")
+        app.buttons["library-create-playlist"].tap()
+        XCTAssertTrue(app.alerts["创建歌单"].waitForExistence(timeout: 5))
+        app.alerts["创建歌单"].buttons["取消"].tap()
+        own.tap()
+        XCTAssertTrue(app.buttons["library-playlist-open-playlist-1"].firstMatch.waitForExistence(timeout: 5))
+    }
+    @MainActor func testOnlineChartRefreshActuallyReplacesSongs() throws {
+        let app = launch("chart-detail", extraArguments: ["-ui-refresh-audit"])
+        XCTAssertTrue(app.staticTexts["风继续吹 · 1"].firstMatch.waitForExistence(timeout: 8))
+        let refresh = app.buttons["catalog-detail-refresh"].firstMatch
+        XCTAssertGreaterThanOrEqual(refresh.frame.width, 44)
+        refresh.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)).tap()
+        XCTAssertTrue(app.staticTexts["刷新后的榜单歌曲"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["catalog-detail-refreshed"].exists)
+        XCTAssertFalse(app.staticTexts["风继续吹 · 1"].exists)
+        refresh.tap()
+        XCTAssertTrue(app.staticTexts["刷新后的榜单歌曲"].firstMatch.waitForExistence(timeout: 8))
+        capture("chart-detail-force-refresh")
+    }
+    @MainActor func testLibraryTrackSortProvidesAndroidChoices() throws {
+        let app = launch("library", extraArguments: ["-ui-reset-library-order"])
+        let row = app.buttons["library-playlist-open-playlist-1"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 8)); row.tap()
+        let sort = app.buttons["library-track-sort"].firstMatch
+        XCTAssertTrue(sort.waitForExistence(timeout: 5)); sort.tap()
+        for name in ["original", "name", "artist", "album", "duration"] { XCTAssertTrue(app.buttons["library-track-sort-" + name].exists) }
+        app.buttons["library-track-sort-duration"].tap()
+        XCTAssertTrue(app.staticTexts["library-track-sort-label"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["library-track-sort-label"].label.contains("时长"))
+        sort.tap(); app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "改为")).firstMatch.tap()
+        capture("library-android-track-sort")
     }
     @MainActor func testMiniPlayerAlwaysShowsCoverToggleAndAdjacentTrackButtons() throws {
         let app = launch("music", extraArguments: ["-ui-mini-player"])

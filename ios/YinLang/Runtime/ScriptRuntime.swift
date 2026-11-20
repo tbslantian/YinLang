@@ -165,6 +165,7 @@ final class ScriptRuntime: NSObject, WKUIDelegate, WKNavigationDelegate, WKScrip
         guard let url = URL(string: address), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { completion(jsonText(["error": "仅支持 HTTP/HTTPS 地址"])); return }
         let options = raw.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? JSONObject } ?? [:]
         var request = URLRequest(url: url); request.httpMethod = options.string("method").isEmpty ? "GET" : options.string("method")
+        if scope.hasPrefix("catalog-refresh-") { request.cachePolicy = .reloadIgnoringLocalCacheData }
         request.allHTTPHeaderFields = options["headers"] as? [String: String]
         if request.value(forHTTPHeaderField: "User-Agent") == nil { request.setValue(actualAgent, forHTTPHeaderField: "User-Agent") }
         if options["statusOnly"] as? Bool == true { request.httpMethod = "HEAD" }

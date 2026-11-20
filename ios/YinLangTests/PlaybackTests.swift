@@ -1,6 +1,7 @@
 import XCTest
 import Network
 import AVFoundation
+import Combine
 @testable import YinLang
 
 // Serve real PCM audio through HTTP, including the Range requests AVPlayer uses.
@@ -168,7 +169,10 @@ final class PlaybackTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(server.rangeRequests(containing: "next=1"), 4)
             server.stop()
         } else { XCTAssertEqual(server.fullRequests(containing: "next=1"), 0, "预解析不能下载整首音频") }
-        player.next()
+        var repeatedParsing = false
+        let observation = player.$resolutionNotice.sink { notice in if notice?.phase == .resolving || notice?.phase == .validating { repeatedParsing = true } }
+        defer { observation.cancel() }
+        player.next(manual: false)
         for _ in 0..<150 {
             if player.elapsed > 0.5 || store.message != nil { break }
             try await Task.sleep(nanoseconds: 100_000_000)
@@ -176,6 +180,7 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(player.current?.id, next.id); XCTAssertNil(store.message, player.status)
         XCTAssertGreaterThan(player.elapsed, 0.5, player.status)
         XCTAssertEqual(defaults.string(forKey: scope + ":calls"), "1", "切歌必须复用已验证结果")
+        XCTAssertFalse(repeatedParsing, "复用预解析结果不能再次弹出解析提示")
         if precache { XCTAssertTrue(player.status.contains("离线缓存"), player.status) }
     }
     @MainActor func testCurrentAudioCachesNotifiesAndReplaysWithoutNetwork() async throws { try await exercisePlayback(library: false, cacheEnabled: true) }
