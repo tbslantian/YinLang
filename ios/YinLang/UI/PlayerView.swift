@@ -23,7 +23,7 @@ struct MiniPlayer: View {
                                 if lyricMode == "double", player.lyrics.indices.contains(active + 1) { Text(player.lyrics[active + 1].text).font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1) }
                             } else { Text(item.subtitle).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(1) }
                             }
-                            GeometryReader { proxy in Capsule().fill(Palette.soft).overlay(alignment: .leading) { Capsule().fill(Palette.accent).frame(width: proxy.size.width * min(1, player.duration > 0 ? player.elapsed / player.duration : 0)) } }.frame(height: 3).padding(.top, 1)
+                            WalkingCatProgress(value: player.elapsed, duration: player.duration, buffered: player.buffered, playing: player.playing && !player.showPlayer, color: Palette.accent, compact: true, interactive: false).frame(height: 24).padding(.top, 1)
                         }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityIdentifier("mini-open-player")
                     HStack(spacing: 0) {
@@ -182,7 +182,7 @@ struct PlayerView: View {
                   }
               }
             }.frame(height: tight ? 54 : 68)
-            BufferedProgress(value: player.elapsed, duration: player.duration, buffered: player.buffered, color: accent, change: player.seek).frame(height: tight ? 20 : 26)
+            WalkingCatProgress(value: player.elapsed, duration: player.duration, buffered: player.buffered, playing: player.playing, color: accent, compact: tight, change: player.seek).frame(height: tight ? 28 : 44)
             HStack { Text(clockText(player.elapsed)); Spacer(); Text(clockText(player.duration)) }.font(.system(size: 12).monospacedDigit()).foregroundStyle(muted)
             Text(player.audioInfo.text).font(.system(size: tight ? 11 : 12, weight: .semibold)).foregroundStyle(muted).lineLimit(1).frame(maxWidth: .infinity, minHeight: tight ? 16 : 20).accessibilityIdentifier("player-audio-info")
             GeometryReader { controls in
@@ -229,26 +229,6 @@ private struct PlayerVinyl: View {
         }.frame(width: edge, height: edge).rotationEffect(.degrees(rotating ? 360 : 0))
             .animation(playing ? .linear(duration: 24).repeatForever(autoreverses: false) : nil, value: rotating)
             .onAppear { rotating = playing }.onChange(of: playing) { _, value in rotating = value }
-    }
-}
-struct BufferedProgress: View {
-    var value: Double
-    var duration: Double
-    var buffered: Double
-    var color: Color
-    var change: (Double) -> Void
-    @State private var preview: Double?
-    var body: some View {
-        GeometryReader { proxy in
-            let span = max(1, duration)
-            let progress = min(1, max(0, (preview ?? value) / span))
-            ZStack(alignment: .leading) {
-                Capsule().fill(color.opacity(0.15)).frame(height: 7)
-                Capsule().fill(color.opacity(0.28)).frame(width: proxy.size.width * min(1, max(0, buffered / span)), height: 7)
-                Capsule().fill(color).frame(width: proxy.size.width * progress, height: 7)
-                Circle().fill(color).frame(width: 14, height: 14).offset(x: max(0, (proxy.size.width - 14) * progress))
-            }.frame(height: proxy.size.height).contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { preview = min(1, max(0, $0.location.x / max(1, proxy.size.width))) * span }.onEnded { _ in if let preview { change(preview) }; preview = nil })
-        }.accessibilityElement().accessibilityLabel("播放进度").accessibilityValue(clockText(value) + " / " + clockText(duration)).accessibilityAdjustableAction { direction in change(max(0, min(duration, value + (direction == .increment ? 5 : -5)))) }
     }
 }
 struct PlayerChoice: View {
