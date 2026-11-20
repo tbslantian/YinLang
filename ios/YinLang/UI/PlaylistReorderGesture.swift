@@ -41,7 +41,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         private weak var scroll: UIScrollView?
         private var gesture: UILongPressGestureRecognizer?
         private var lifted: UIView?
-        private var displayLink: CADisplayLink?
+        private var scrollTimer: Timer?
         private var slots: [CGRect] = []
         private var key: String?
         private var target = 0
@@ -89,7 +89,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             return matches.max { $0.1 < $1.1 }?.0
         }
         func detach() {
-            displayLink?.invalidate(); displayLink = nil
+            scrollTimer?.invalidate(); scrollTimer = nil
             if let gesture { gesture.view?.removeGestureRecognizer(gesture) }
             lifted?.layer.removeAllAnimations(); lifted?.removeFromSuperview(); lifted = nil
             gesture = nil; scroll = nil; key = nil; settling = false
@@ -147,9 +147,11 @@ struct PlaylistReorderGesture: UIViewRepresentable {
                 // scroll view's recognizer here can cancel this touch sequence.
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 parent.begin(selected)
-                timestamp = 0
-                let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
-                link.add(to: .main, forMode: .common); displayLink = link
+                // Match Android's 32 ms edge-scroll loop. Display refresh can
+                // pause while UIKit tracks a long press on some iPad layouts.
+                timestamp = ProcessInfo.processInfo.systemUptime
+                let timer = Timer(timeInterval: 0.032, repeats: true) { [weak self] _ in self?.tick() }
+                RunLoop.main.add(timer, forMode: .common); scrollTimer = timer
             case .changed:
                 updatePosition()
                 // Touch events still arrive on a busy display. Advance here
@@ -178,8 +180,9 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             moveCount += 1
 #endif
         }
-        @objc private func tick(_ link: CADisplayLink) {
-            let dt = timestamp == 0 ? link.duration : min(0.1, link.timestamp - timestamp); timestamp = link.timestamp
+        private func tick() {
+            let now = ProcessInfo.processInfo.systemUptime
+            let dt = min(0.1, max(0.016, now - timestamp)); timestamp = now
             scrollAtEdge(seconds: dt)
         }
         private func scrollAtEdge(seconds: CFTimeInterval) {
@@ -201,7 +204,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         }
         private func finish(dropped: Bool) {
             guard key != nil, let anchor, let window = anchor.window, let lifted else { return }
-            displayLink?.invalidate(); displayLink = nil; settling = true
+            scrollTimer?.invalidate(); scrollTimer = nil; settling = true
             key = nil
 #if DEBUG
             if UITestFixtures.active {
