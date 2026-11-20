@@ -7,8 +7,13 @@ struct AudioStreamInfo: Equatable {
     var sampleRate = 0.0
 
     var text: String {
-        let rate = bitsPerSecond.isFinite && bitsPerSecond > 0 ? Self.number(bitsPerSecond / 1000) : "--"
         let sample = sampleRate.isFinite && sampleRate > 0 ? Self.number(sampleRate / 1000) : "--"
+        // Compressed lossless has a variable bitrate; show its format and
+        // sample rate without a kbps value or an unknown-rate placeholder.
+        if ["FLAC", "ALAC", "PCM"].contains(format.uppercased()) {
+            return "\(format) · \(sample) kHz"
+        }
+        let rate = bitsPerSecond.isFinite && bitsPerSecond > 0 ? Self.number(bitsPerSecond / 1000) : "--"
         return "\(format.isEmpty ? "格式未知" : format) · \(rate) kbps · \(sample) kHz"
     }
     private static func number(_ value: Double) -> String {

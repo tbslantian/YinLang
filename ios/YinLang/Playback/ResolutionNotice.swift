@@ -20,9 +20,10 @@ struct ResolutionNoticeView: View {
     @EnvironmentObject private var player: Player
     var dark = false
     var compact = false
+    var includesSuccess = true
     private var textOnly: Bool { player.resolutionNotice?.phase == .success || player.resolutionNotice?.phase == .cached }
     var body: some View {
-        if let notice = player.resolutionNotice {
+        if let notice = player.resolutionNotice, includesSuccess || !textOnly {
             HStack(spacing: 10) {
                 if !textOnly {
                     if notice.phase == .resolving || notice.phase == .validating { ProgressView().tint(ink) }

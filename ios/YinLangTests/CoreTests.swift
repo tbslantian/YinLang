@@ -87,7 +87,7 @@ final class CoreTests: XCTestCase {
     }
     func testAudioParametersKeepUnitsAndActualValues() {
         XCTAssertEqual(AudioStreamInfo(format: "MP3", bitsPerSecond: 320000, sampleRate: 44100).text, "MP3 · 320 kbps · 44.1 kHz")
-        XCTAssertEqual(AudioStreamInfo(format: "FLAC", bitsPerSecond: 1411200, sampleRate: 96000).text, "FLAC · 1411.2 kbps · 96 kHz")
+        XCTAssertEqual(AudioStreamInfo(format: "FLAC", bitsPerSecond: 1411200, sampleRate: 96000).text, "FLAC · 96 kHz")
         XCTAssertEqual(AudioStreamInfo().text, "格式未知 · -- kbps · -- kHz")
         XCTAssertEqual(AudioStreamInfo(bitsPerSecond: .nan, sampleRate: .infinity).text, "格式未知 · -- kbps · -- kHz")
     }
