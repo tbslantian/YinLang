@@ -106,7 +106,7 @@ struct MusicView: View {
             }
         }.androidPage("发现音乐", category: "音乐").buttonStyle(.plain).task {
             if listsCover == nil, let rows = try? await store.catalog("lists", ["source": "wy", "sort": "@hot", "page": 1]).rows("list"), let first = rows.first { listsCover = store.artwork(MediaItem(first)) }
-        }.task(id: topChartCover) { await loadChartCover() }.task(id: store.connectionRevision) { await loadLibraryCovers() }
+        }.task(id: topChartCover) { await loadChartCover() }.task(id: "\(store.connectionRevision):\(store.libraryPlaylistRevision)") { await loadLibraryCovers() }
     }
     private func loadChartCover() async {
         chartsCover = nil

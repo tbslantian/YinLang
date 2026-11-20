@@ -30,6 +30,61 @@ struct Navidrome {
         try await get("search3", [.init(name: "query", value: query), .init(name: "songCount", value: "50"), .init(name: "songOffset", value: "\(offset)"), .init(name: "albumCount", value: "0"), .init(name: "artistCount", value: "0")]).object("searchResult3").rows("song")
     }
     func playlist(_ id: String) async throws -> JSONObject { try await get("getPlaylist", [.init(name: "id", value: id)]).object("playlist") }
+    private func nativeEndpoint(_ path: String) throws -> URL {
+        let address = base.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard var parts = URLComponents(string: address), ["http", "https"].contains(parts.scheme?.lowercased() ?? ""), parts.host != nil else { throw AppFailure.message("服务器地址无效") }
+        if parts.path.hasSuffix("/rest") { parts.path = String(parts.path.dropLast(5)) }
+        parts.path += path; parts.queryItems = nil; parts.fragment = nil
+        guard let url = parts.url else { throw AppFailure.message("服务器地址无效") }; return url
+    }
+    // Image upload is a Navidrome native API, not a Subsonic updatePlaylist
+    // parameter. Authenticate only for this action; never persist/log the JWT.
+    func changePlaylistCover(_ id: String, jpeg: Data?) async throws -> JSONObject {
+        guard !id.isEmpty, id.range(of: #"^[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil else { throw AppFailure.message("歌单标识无效") }
+        let latest = try await playlist(id)
+        guard canEdit(latest) else { throw AppFailure.message("当前账号没有修改此歌单封面的权限") }
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 45; config.timeoutIntervalForResource = 90
+        let session = URLSession(configuration: config, delegate: NavidromeNoRedirect(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        var login = URLRequest(url: try nativeEndpoint("/auth/login")); login.httpMethod = "POST"
+        login.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        login.httpBody = try JSONSerialization.data(withJSONObject: ["username": user, "password": password])
+        let (authData, authResponse) = try await session.data(for: login)
+        guard let authHTTP = authResponse as? HTTPURLResponse else { throw AppFailure.message("Navidrome 登录响应无效") }
+        guard authHTTP.statusCode == 200,
+              let auth = try? JSONSerialization.jsonObject(with: authData) as? JSONObject,
+              !auth.string("token").isEmpty else {
+            if [404, 405, 501].contains(authHTTP.statusCode) { throw AppFailure.message("此服务器不支持 Navidrome 原生登录和封面上传，请升级 Navidrome") }
+            throw AppFailure.message("封面上传需 Navidrome 原生账号登录，请检查用户名、密码或代理登录配置")
+        }
+        var upload = URLRequest(url: try nativeEndpoint("/api/playlist/\(id)/image"))
+        upload.httpMethod = jpeg == nil ? "DELETE" : "POST"
+        upload.setValue("Bearer " + auth.string("token"), forHTTPHeaderField: "X-ND-Authorization")
+        upload.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let jpeg {
+            guard !jpeg.isEmpty, jpeg.count <= 4 * 1_048_576 else { throw AppFailure.message("封面文件过大，请选择较小的图片") }
+            let boundary = "YinLang-" + UUID().uuidString
+            upload.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            var data = Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"image\"; filename=\"playlist-cover.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".utf8)
+            data.append(jpeg); data.append(Data("\r\n--\(boundary)--\r\n".utf8)); upload.httpBody = data
+        }
+        let (data, response) = try await session.data(for: upload)
+        guard let http = response as? HTTPURLResponse else { throw AppFailure.message("服务器封面上传响应无效") }
+        switch http.statusCode {
+        case 200...299: break
+        case 401: throw AppFailure.message("封面上传登录已失效，请重试")
+        case 403: throw AppFailure.message("服务器拒绝修改封面：需要歌单编辑权限，并为普通用户开启 EnableArtworkUpload，或使用管理员账号")
+        case 404, 405, 501: throw AppFailure.message("此 Navidrome 版本未提供歌单封面上传接口，请升级服务器")
+        case 413: throw AppFailure.message("图片超过服务器上传大小限制")
+        default: throw AppFailure.message("修改服务器歌单封面失败（HTTP \(http.statusCode)），请稍后重试")
+        }
+        guard let result = try? JSONSerialization.jsonObject(with: data) as? JSONObject,
+              result.string("status") == "ok" else { throw AppFailure.message("服务器未确认封面保存成功，请刷新检查") }
+        // The server's artwork worker can refresh asynchronously. The caller
+        // invalidates local image caches even if this metadata refresh fails.
+        return (try? await playlist(id)) ?? latest
+    }
     func songCount() async throws -> Int? {
         let status = try await get("getScanStatus").object("scanStatus")
         guard let count = Int(status.string("count")), count >= 0 else { return nil }
@@ -82,9 +137,12 @@ struct Navidrome {
         guard !id.isEmpty else { return "" }
         // The endpoint uses a fresh authentication salt. Keep the resulting cover
         // URL stable across progress ticks, while separating accounts/passwords.
-        let key = Disk.hash(jsonText([base, user, password, id, String(size)]))
+        let revision = UserDefaults.standard.string(forKey: "nav-cover-revision:" + identity + ":" + id) ?? ""
+        let key = Disk.hash(jsonText([base, user, password, id, String(size), revision]))
         return NavidromeCoverURLs.shared.address(key) {
-            (try? endpoint("getCoverArt", [.init(name: "id", value: id), .init(name: "size", value: "\(size)")]).absoluteString) ?? ""
+            var parameters: [URLQueryItem] = [.init(name: "id", value: id), .init(name: "size", value: "\(size)")]
+            if !revision.isEmpty { parameters.append(.init(name: "_yl_cover_revision", value: revision)) }
+            return (try? endpoint("getCoverArt", parameters).absoluteString) ?? ""
         }
     }
     func lyrics(_ item: MediaItem) async -> String {
@@ -100,6 +158,13 @@ struct Navidrome {
             }
         }
         return (try? await get("getLyrics", [.init(name: "artist", value: item.subtitle), .init(name: "title", value: item.title)]).object("lyrics").string("value")) ?? ""
+    }
+}
+
+private final class NavidromeNoRedirect: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        // Credentials and upload tokens must stay on the configured endpoint.
+        completionHandler(nil)
     }
 }
 

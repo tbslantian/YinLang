@@ -7,6 +7,7 @@ import UIKit
 struct PlaylistReorderGesture: UIViewRepresentable {
     var keys: [String]
     var frames: [String: CGRect]
+    var grid = false
     var begin: (String) -> Void
     var move: (String, Int) -> Void
     var end: (Bool) -> Void
@@ -47,6 +48,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         private var target = 0
         private var finger = CGPoint.zero
         private var touchOffset: CGFloat = 0
+        private var touchOffsetX: CGFloat = 0
         private var fixedX: CGFloat = 0
         private var timestamp: CFTimeInterval = 0
         private var settling = false
@@ -131,10 +133,10 @@ struct PlaylistReorderGesture: UIViewRepresentable {
                 guard let selected = parent.keys.first(where: { parent.frames[$0]?.contains(point) == true }),
                       let rect = parent.frames[selected],
                       let snapshot = scroll.resizableSnapshotView(from: anchor.convert(rect, to: scroll), afterScreenUpdates: false, withCapInsets: .zero) else { return }
-                key = selected; slots = parent.frames.values.sorted { $0.minY < $1.minY }
+                key = selected; slots = parent.keys.compactMap { parent.frames[$0] }
                 target = parent.keys.firstIndex(of: selected) ?? 0
                 snapshot.frame = anchor.convert(rect, to: window)
-                touchOffset = finger.y - snapshot.center.y; fixedX = snapshot.center.x
+                touchOffset = finger.y - snapshot.center.y; touchOffsetX = finger.x - snapshot.center.x; fixedX = snapshot.center.x
                 snapshot.isUserInteractionEnabled = false; snapshot.isAccessibilityElement = true
                 snapshot.accessibilityIdentifier = "library-playlist-drag-preview"
                 snapshot.accessibilityLabel = "正在移动歌单"
@@ -173,12 +175,19 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             let y = min(viewport.maxY - half, max(viewport.minY + half, finger.y - touchOffset))
             // No transform or implicit animation: the lifted row follows the
             // finger at its original width and height on both phones and tablets.
-            lifted.center = CGPoint(x: fixedX, y: y)
+            let halfWidth = lifted.bounds.width / 2
+            let x = parent.grid ? min(viewport.maxX - halfWidth, max(viewport.minX + halfWidth, finger.x - touchOffsetX)) : fixedX
+            lifted.center = CGPoint(x: x, y: y)
 #if DEBUG
             maximumSizeError = max(maximumSizeError, max(abs(lifted.frame.width - originalSize.width), abs(lifted.frame.height - originalSize.height)))
 #endif
             let local = anchor.convert(lifted.center, from: window)
-            guard let index = slots.indices.min(by: { abs(slots[$0].midY - local.y) < abs(slots[$1].midY - local.y) }), index != target else { return }
+            func distance(_ rect: CGRect) -> CGFloat {
+                let dx = parent.grid ? rect.midX - local.x : 0
+                let dy = rect.midY - local.y
+                return dx * dx + dy * dy
+            }
+            guard let index = slots.indices.min(by: { distance(slots[$0]) < distance(slots[$1]) }), index != target else { return }
             target = index; parent.move(key, index)
 #if DEBUG
             moveCount += 1
@@ -196,7 +205,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         private func scrollAtEdge(seconds: CFTimeInterval) {
             guard let scroll, let anchor, let window = anchor.window, key != nil else { return }
             let viewport = scroll.convert(scroll.bounds.inset(by: scroll.adjustedContentInset), to: window).intersection(window.bounds)
-            let edge = max(CGFloat(64), (lifted?.bounds.height ?? 0) * 1.25)
+            let edge = min(max(CGFloat(64), (lifted?.bounds.height ?? 0) * 1.25), max(24, viewport.height * 0.25))
             let up = max(0, min(1, (viewport.minY + edge - finger.y) / edge))
             let down = max(0, min(1, (finger.y - viewport.maxY + edge) / edge))
             let minimum = -scroll.adjustedContentInset.top

@@ -14,6 +14,7 @@ final class AppStore: ObservableObject {
     @Published var message: String?
     @Published var activity = ""
     @Published var connectionRevision = 0
+    @Published private(set) var libraryPlaylistRevision = 0
     @Published var downloading: Set<String> = []
     @Published private var serverStars: [String: Bool] = Disk.read("server-stars.json", fallback: [:])
     @Published var nowBook: MediaItem? = Disk.read("last-book.json", fallback: Optional<MediaItem>.none)
@@ -36,6 +37,17 @@ final class AppStore: ObservableObject {
     }
     func disconnect() { defaults.removeObject(forKey: "nav-url"); defaults.removeObject(forKey: "nav-user"); connectionRevision += 1 }
     func libraryItem(_ row: JSONObject, kind: String = "song") -> MediaItem { var row = row; row["_account"] = nav?.identity ?? ""; return MediaItem(row, source: "library", kind: kind) }
+    func changePlaylistCover(_ item: MediaItem, jpeg: Data?) async throws -> MediaItem {
+        guard let nav, item.source == "library", item.kind == "playlist", item.raw.string("_account") == nav.identity else { throw AppFailure.message("音乐库账号已变更，请重新打开歌单") }
+        let refreshed = try await nav.changePlaylistCover(item.key, jpeg: jpeg)
+        guard self.nav?.identity == nav.identity else { throw AppFailure.message("封面已提交到原服务器，当前音乐库账号已变更") }
+        let revision = UUID().uuidString
+        for id in Set([item.cover, refreshed.string("coverArt"), "pl-" + item.key]) where !id.isEmpty {
+            defaults.set(revision, forKey: "nav-cover-revision:" + nav.identity + ":" + id)
+        }
+        libraryPlaylistRevision += 1
+        return libraryItem(refreshed, kind: "playlist")
+    }
     func artwork(_ item: MediaItem) -> URL? {
         if item.source == "library" && item.raw.string("_account") != nav?.identity { return nil }
         return URL(string: item.source == "library" ? nav?.cover(item.cover) ?? "" : item.cover.replacingOccurrences(of: "{size}", with: "400"))

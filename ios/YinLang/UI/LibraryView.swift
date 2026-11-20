@@ -11,6 +11,7 @@ struct LibraryView: View {
     @State private var countAccount = ""
     @State private var navigationWidth: CGFloat = 360
     @State private var shared = false
+    @AppStorage("library-playlists-grid") private var playlistGrid = false
     private var shortcutHeight: CGFloat { max(72, min(104, navigationWidth * 0.085)) }
     private var navigationHeight: CGFloat { shortcutHeight * 3 + 16 }
     private var orderKey: String { "playlist-order:" + (store.nav?.identity ?? "") }
@@ -41,14 +42,18 @@ struct LibraryView: View {
                 playlistSection
             }
         }.androidPage("音乐库", category: "音乐") { NavigationLink { ConnectionView() } label: { Image("navidrome_logo").resizable().scaledToFit().frame(width: 34, height: 34).frame(width: 48, height: 48) }.accessibilityLabel("音乐库连接与音质设置") }
-            .task(id: store.connectionRevision) { await load() }.refreshable { await load() }
+            .task(id: "\(store.connectionRevision):\(store.libraryPlaylistRevision)") { await load() }.refreshable { await load() }
             .alert("创建歌单", isPresented: $create) { TextField("歌单名称", text: $name); Button("创建") { Task { do { guard let nav = store.nav, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }; _ = try await nav.get("createPlaylist", [.init(name: "name", value: name)]); name = ""; await load() } catch { store.message = error.localizedDescription } } }; Button("取消", role: .cancel) {} }
     }
     @ViewBuilder private var playlistSection: some View {
                 HStack(spacing: 6) {
-                    Button("我的歌单") { shared = false }.buttonStyle(AndroidButtonStyle(primary: !shared)).accessibilityIdentifier("library-own-tab").accessibilityAddTraits(!shared ? .isSelected : [])
-                    Button("共享歌单") { shared = true }.buttonStyle(AndroidButtonStyle(primary: shared)).accessibilityIdentifier("library-shared-tab").accessibilityAddTraits(shared ? .isSelected : [])
-                    Button("创建歌单") { create = true }.buttonStyle(AndroidButtonStyle()).accessibilityIdentifier("library-create-playlist")
+                    Button("我的歌单") { shared = false }.buttonStyle(PlaylistTabStyle(selected: !shared)).accessibilityIdentifier("library-own-tab").accessibilityAddTraits(!shared ? .isSelected : [])
+                    Button("共享歌单") { shared = true }.buttonStyle(PlaylistTabStyle(selected: shared)).accessibilityIdentifier("library-shared-tab").accessibilityAddTraits(shared ? .isSelected : [])
+                    Button("创建歌单") { create = true }.buttonStyle(PlaylistTabStyle()).accessibilityIdentifier("library-create-playlist")
+                    Spacer(minLength: 0)
+                    Button { playlistGrid.toggle() } label: {
+                        YLIcon(systemName: playlistGrid ? "list.bullet" : "square.grid.2x2", size: 20).foregroundStyle(Palette.accent).frame(width: 44, height: 44).contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityLabel("切换网格列表").accessibilityValue(playlistGrid ? "卡片显示" : "列表显示").accessibilityIdentifier("library-playlist-style-toggle")
                 }.padding(.top, 8)
                 if !error.isEmpty { ErrorPanel(text: error) { Task { await load() } } }
                 let visible = playlists.filter { isOwn($0) != shared }
@@ -56,8 +61,8 @@ struct LibraryView: View {
                 if !shared && !visible.isEmpty { Text("长按歌单拖动排序，点右侧 ⋯ 编辑或删除。").font(.system(size: 13)).foregroundStyle(Palette.muted) }
                 LibraryPlaylistRows(items: Binding(get: { playlists.filter { isOwn($0) != shared } }, set: { rows in
                     playlists = rows + playlists.filter { isOwn($0) == shared }
-                }), reorderable: !shared) { UserDefaults.standard.set(playlists.filter(isOwn).map(\.key), forKey: orderKey) }
-                    .id(shared)
+                }), reorderable: !shared, grid: playlistGrid, width: navigationWidth) { UserDefaults.standard.set(playlists.filter(isOwn).map(\.key), forKey: orderKey) }
+                    .id("\(shared):\(playlistGrid)")
     }
     private func smallLink(_ title: String, icon: String, kind: String) -> some View { NavigationLink { LibraryListView(kind: kind, title: title) } label: { LibraryShortcut(title: title, icon: icon, height: shortcutHeight) }.accessibilityIdentifier("library-" + kind + "-shortcut") }
     private func isOwn(_ item: MediaItem) -> Bool { store.nav?.ownsPlaylist(item.raw) == true }
@@ -82,9 +87,20 @@ struct LibraryView: View {
     }
 }
 
+private struct PlaylistTabStyle: ButtonStyle {
+    var selected = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.system(size: 13, weight: .semibold)).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(selected ? Palette.onAccent : Palette.accent).padding(.horizontal, 10).frame(minHeight: 44)
+            .background(selected ? Palette.accent : Palette.tint, in: Capsule()).opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
 private struct LibraryPlaylistRows: View {
     @Binding var items: [MediaItem]
     var reorderable: Bool
+    var grid = false
+    var width: CGFloat = 360
     var save: () -> Void
     @State private var frames: [String: CGRect] = [:]
     @State private var dragging: String?
@@ -96,15 +112,24 @@ private struct LibraryPlaylistRows: View {
     @State private var reorderAudit = "idle"
 #endif
     var body: some View {
-        VStack(spacing: 16) {
-            ForEach(items) { item in
-                LibraryPlaylistRow(item: item, editable: reorderable, open: { if canOpen { opened = item } }, edit: { if canOpen { editing = item } }).opacity(dragging == item.key ? 0.35 : 1)
-                    .background { GeometryReader { proxy in Color.clear.preference(key: PlaylistRowFrames.self, value: [item.key: proxy.frame(in: .named("library-playlists"))]) } }
+        VStack(spacing: grid ? 8 : 16) {
+            if grid {
+                let columns = CatalogLayout.columns(preferred: 0, width: width + 32, tablet: UIDevice.current.userInterfaceIdiom == .pad)
+                ForEach(Array(stride(from: 0, to: items.count, by: columns)), id: \.self) { start in
+                    HStack(spacing: 8) {
+                        ForEach(0..<columns, id: \.self) { column in
+                            if start + column < items.count { playlist(items[start + column]).frame(maxWidth: .infinity) }
+                            else { Color.clear.frame(maxWidth: .infinity) }
+                        }
+                    }
+                }
+            } else {
+                ForEach(items) { item in playlist(item) }
             }
         }.coordinateSpace(name: "library-playlists")
             .onPreferenceChange(PlaylistRowFrames.self) { frames = $0 }
             .background {
-                if reorderable && opened == nil && editing == nil { PlaylistReorderGesture(keys: items.map(\.key), frames: frames, begin: { original = items; dragging = $0; suppressOpenUntil = .distantFuture }, move: { key, index in
+                if reorderable && opened == nil && editing == nil { PlaylistReorderGesture(keys: items.map(\.key), frames: frames, grid: grid, begin: { original = items; dragging = $0; suppressOpenUntil = .distantFuture }, move: { key, index in
                     guard let from = items.firstIndex(where: { $0.key == key }), from != index, items.indices.contains(index) else { return }
                     withAnimation(.easeInOut(duration: 0.16)) { items.move(fromOffsets: IndexSet(integer: from), toOffset: index > from ? index + 1 : index) }
                 }, end: { dropped in
@@ -124,7 +149,41 @@ private struct LibraryPlaylistRows: View {
             }
 #endif
     }
+    private func playlist(_ item: MediaItem) -> some View {
+        Group {
+            if grid { LibraryPlaylistCard(item: item, editable: reorderable, open: { if canOpen { opened = item } }, edit: { if canOpen { editing = item } }) }
+            else { LibraryPlaylistRow(item: item, editable: reorderable, open: { if canOpen { opened = item } }, edit: { if canOpen { editing = item } }) }
+        }.opacity(dragging == item.key ? 0.35 : 1)
+            .background { GeometryReader { proxy in Color.clear.preference(key: PlaylistRowFrames.self, value: [item.key: proxy.frame(in: .named("library-playlists"))]) } }
+    }
     private var canOpen: Bool { dragging == nil && Date() >= suppressOpenUntil }
+}
+
+private struct LibraryPlaylistCard: View {
+    @EnvironmentObject private var store: AppStore
+    let item: MediaItem
+    let editable: Bool
+    let open: () -> Void
+    let edit: () -> Void
+    var body: some View {
+        Button(action: open) {
+            ZStack(alignment: .bottomLeading) {
+                FrostedArtwork(color: Color(rgb: 0x62466d), image: store.artwork(item), seed: item.id)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(item.title).font(.system(size: 16, weight: .bold)).lineLimit(2)
+                    Text(item.raw.string("songCount") + " 首歌曲").font(.system(size: 12)).lineLimit(1)
+                }.foregroundStyle(.white).shadow(color: .black.opacity(0.8), radius: 3, y: 1).padding(16)
+            }.frame(maxWidth: .infinity).frame(height: 154).clipShape(RoundedRectangle(cornerRadius: 17))
+                .overlay { RoundedRectangle(cornerRadius: 17).stroke(.white.opacity(0.3), lineWidth: 1).allowsHitTesting(false) }
+                .contentShape(RoundedRectangle(cornerRadius: 17))
+        }.buttonStyle(.plain).accessibilityIdentifier("library-playlist-open-" + item.key)
+            .overlay(alignment: .topTrailing) {
+                if editable {
+                    Button(action: edit) { YLIcon(systemName: "ellipsis", size: 19).foregroundStyle(.white).frame(width: 44, height: 44).background(.black.opacity(0.25), in: Circle()).contentShape(Circle()) }
+                        .buttonStyle(.plain).padding(6).accessibilityLabel("歌单操作").accessibilityIdentifier("library-playlist-edit-" + item.key)
+                }
+            }
+    }
 }
 
 private struct PlaylistRowFrames: PreferenceKey {
@@ -377,13 +436,15 @@ struct PlaylistEditor: View {
     @State private var shared = false
     @State private var editable = false
     @State private var confirm = false
+    @State private var coverBusy = false
     var body: some View {
         AndroidForm {
+            PlaylistCoverEditor(item: item, editable: editable, busy: $coverBusy)
             TextField("名称", text: $name); TextField("简介", text: $comment, axis: .vertical); Toggle("公开歌单", isOn: $shared)
-            Button("保存") { Task { do { guard let nav = store.nav, editable, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }; _ = try await nav.get("updatePlaylist", [.init(name: "playlistId", value: item.key), .init(name: "name", value: name), .init(name: "comment", value: comment), .init(name: "public", value: String(shared))]); dismiss() } catch { store.message = error.localizedDescription } } }.disabled(!editable)
-            Button("删除歌单", role: .destructive) { confirm = true }.disabled(!editable)
+            Button("保存") { Task { do { guard let nav = store.nav, editable, !coverBusy, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }; _ = try await nav.get("updatePlaylist", [.init(name: "playlistId", value: item.key), .init(name: "name", value: name), .init(name: "comment", value: comment), .init(name: "public", value: String(shared))]); dismiss() } catch { store.message = error.localizedDescription } } }.disabled(!editable || coverBusy)
+            Button("删除歌单", role: .destructive) { confirm = true }.disabled(!editable || coverBusy)
         }.androidPage("编辑歌单").task {
-            guard let nav = store.nav else { return }; do { let playlist = try await nav.playlist(item.key); name = playlist.string("name"); comment = playlist.string("comment"); shared = playlist["public"] as? Bool ?? false; editable = nav.canEdit(playlist) } catch { store.message = error.localizedDescription }
+            guard let nav = store.nav, item.raw.string("_account") == nav.identity else { return }; do { let playlist = try await nav.playlist(item.key); guard !Task.isCancelled, store.nav?.identity == nav.identity else { return }; name = playlist.string("name"); comment = playlist.string("comment"); shared = playlist["public"] as? Bool ?? false; editable = nav.canEdit(playlist) } catch { store.message = error.localizedDescription }
         }.confirmationDialog("删除此歌单？歌曲文件会保留。", isPresented: $confirm, titleVisibility: .visible) { Button("删除歌单", role: .destructive) { Task { do { guard let nav = store.nav, editable else { return }; _ = try await nav.get("deletePlaylist", [.init(name: "id", value: item.key)]); dismiss() } catch { store.message = error.localizedDescription } } } }
     }
 }
