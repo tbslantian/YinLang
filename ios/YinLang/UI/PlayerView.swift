@@ -7,10 +7,6 @@ struct MiniPlayer: View {
     @EnvironmentObject var store: AppStore
     @AppStorage("mini-lyrics") private var lyricMode = "off"
     private var active: Int? { player.lyrics.lastIndex { $0.time <= player.elapsed } }
-    private var successNotice: ResolutionNotice? {
-        guard let notice = player.resolutionNotice, notice.phase == .success || notice.phase == .cached else { return nil }
-        return notice
-    }
     var body: some View {
         if let item = player.current {
             VStack(spacing: 5) {
@@ -18,11 +14,8 @@ struct MiniPlayer: View {
                     Button { player.toggle() } label: { Artwork(item: item, size: 48).overlay { Color.black.opacity(0.4); YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: 24).foregroundStyle(.white) }.clipShape(RoundedRectangle(cornerRadius: 11)).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityLabel(player.playing ? "暂停" : "播放").accessibilityIdentifier("mini-play-pause").onLongPressGesture { player.showPlayer = true }
                     Button { player.showPlayer = true } label: {
                         VStack(alignment: .leading, spacing: 4) {
-                            if let notice = successNotice {
-                                VStack(spacing: 3) {
-                                    Text(notice.title).font(.system(size: 13, weight: .bold)).lineLimit(1)
-                                    if !notice.detail.isEmpty { Text(notice.detail).font(.system(size: 11)).lineLimit(1) }
-                                }.foregroundStyle(Palette.accent).multilineTextAlignment(.center).frame(maxWidth: .infinity, minHeight: 35).accessibilityElement(children: .combine).accessibilityIdentifier("mini-success-notice")
+                            if player.resolutionNotice != nil {
+                                ResolutionNoticeView().frame(maxWidth: .infinity, minHeight: 35)
                             } else {
                             Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1)
                             if lyricMode != "off", let active {
@@ -148,14 +141,9 @@ struct PlayerView: View {
             GeometryReader { metadata in
               HStack(spacing: 7) {
                 VStack(alignment: .leading, spacing: tight ? 3 : 6) { Text(player.current?.title ?? "音浪").font(.system(size: tight ? 18 : 23, weight: .bold)).lineLimit(compact ? 1 : 2); Text(player.current?.subtitle ?? "").font(.system(size: tight ? 12 : 14)).foregroundStyle(muted).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading)
-                if metadata.size.width >= 560 {
-                    Color.clear.frame(width: min(300, metadata.size.width * 0.42)).overlay { ResolutionNoticeView(dark: dark, compact: true, includesSuccess: false) }
-                }
                 if let item = player.current, item.kind != "episode" { Button { store.toggleLike(item) } label: { YLIcon(systemName: store.isLiked(item) ? "star.fill" : "star", size: 20).frame(width: 44, height: 48) }.accessibilityLabel("收藏歌曲") }
                 Button { menu = true } label: { YLIcon(systemName: "ellipsis", size: 20).frame(width: 44, height: 48) }.accessibilityLabel("播放器菜单")
-              }.frame(height: metadata.size.height).overlay(alignment: .top) {
-                  if metadata.size.width < 560 { ResolutionNoticeView(dark: dark, compact: true, includesSuccess: false).offset(y: -58) }
-              }
+              }.frame(height: metadata.size.height)
             }.frame(height: tight ? 54 : 68)
             BufferedProgress(value: player.elapsed, duration: player.duration, buffered: player.buffered, color: accent, change: player.seek).frame(height: tight ? 20 : 26)
             HStack { Text(clockText(player.elapsed)); Spacer(); Text(clockText(player.duration)) }.font(.system(size: 12).monospacedDigit()).foregroundStyle(muted)

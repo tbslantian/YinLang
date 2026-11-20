@@ -129,7 +129,7 @@ final class Player: ObservableObject {
         if let failureObserver { NotificationCenter.default.removeObserver(failureObserver); self.failureObserver = nil }
         audio.pause(); audio.replaceCurrentItem(with: nil)
         generation = UUID(); let token = generation
-        loading = true; playing = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = prepared == nil ? "正在解析音频…" : "正在载入已准备的音频…"
+        loading = true; playing = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = current.source == "library" ? "正在载入音乐库音频…" : prepared == nil ? "正在解析音频…" : "正在载入已准备的音频…"
         if prepared == nil { publishResolution(ResolutionNotice(phase: .resolving, detail: current.title)) }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         if useLocal {
@@ -225,7 +225,10 @@ final class Player: ObservableObject {
             }
         }
     }
-    func publishResolution(_ notice: ResolutionNotice) {
+    func publishResolution(_ notice: ResolutionNotice, for item: MediaItem? = nil) {
+        // Navidrome streams directly from its server. Keep cache-completion
+        // notices, but never label its load, success or failure as source parsing.
+        guard (item ?? current)?.source != "library" || notice.phase == .cached else { return }
         noticeTask?.cancel()
         if notice.phase == .success { resolutionSucceeded = true }
         withAnimation(.easeOut(duration: 0.18)) { resolutionNotice = notice }
@@ -269,7 +272,7 @@ final class Player: ObservableObject {
             // A manual/automatic next may already be awaiting this same task.
             // It still owns the verified result even after the old page closes.
             guard let self, self.generation == token, self.nextPreparation?.id == id else { return result }
-            self.publishResolution(ResolutionNotice(phase: .success, detail: "下一首 · " + item.title))
+            self.publishResolution(ResolutionNotice(phase: .success, detail: "下一首 · " + item.title), for: item)
             if settings.precache && !result.0.isFileURL {
                 self.preparationCacheTask = Task { [weak self] in
                     guard let cached = await store.cacheResolved(item, url: result.0, headers: result.1, source: result.2), !Task.isCancelled,
