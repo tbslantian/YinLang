@@ -76,6 +76,7 @@ struct HomeEntry: View {
 struct MusicView: View {
     @EnvironmentObject private var store: AppStore
     @State private var chartsCover: URL?
+    @AppStorage(ChartArtworkSettings.topCoverKey) private var topChartCover = true
     @State private var listsCover: URL?
     @State private var localCovers: [URL] = []
     @State private var libraryCovers: [URL] = []
@@ -100,14 +101,27 @@ struct MusicView: View {
                     }
                     let recent: [MediaItem] = Disk.read("recent-music.json", fallback: [])
                     if let item = recent.first, item.kind == "song" { SectionTitle(title: "继续听歌"); RecentSong(item: item) }
-                    NavigationLink { PluginSettingsView(books: false) } label: { AndroidRow(title: "音乐设置", subtitle: "LX 音源与优先音质", icon: "slider.horizontal.3") }.padding(.top, 6)
+                    NavigationLink { PluginSettingsView(books: false) } label: { AndroidRow(title: "音乐设置", subtitle: "音源、音质与榜单封面", icon: "slider.horizontal.3") }.padding(.top, 6)
                 }.padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 22)
             }
         }.androidPage("发现音乐", category: "音乐").buttonStyle(.plain).task {
             if listsCover == nil, let rows = try? await store.catalog("lists", ["source": "wy", "sort": "@hot", "page": 1]).rows("list"), let first = rows.first { listsCover = store.artwork(MediaItem(first)) }
-            if chartsCover == nil, let row = try? await store.catalog("charts", ["source": "wy"]).rows("list").first,
-               let cover = try? await store.catalog("chart-cover", ["source": "wy", "id": MediaItem(row, kind: "chart").catalogID]) { chartsCover = cover.rows("list").first.flatMap { URL(string: $0.string("img")) } }
-        }.task(id: store.connectionRevision) { await loadLibraryCovers() }
+        }.task(id: topChartCover) { await loadChartCover() }.task(id: store.connectionRevision) { await loadLibraryCovers() }
+    }
+    private func loadChartCover() async {
+        chartsCover = nil
+        guard let row = try? await store.catalog("charts", ["source": "wy"]).rows("list").first,
+              !Task.isCancelled else { return }
+        let item = MediaItem(row, kind: "chart")
+        if let result = try? await store.catalog("chart-covers", ["source": item.source]), !Task.isCancelled,
+           let cover = result.rows("list").first(where: { $0.string("id") == item.catalogID }) {
+            chartsCover = URL(string: cover.string("cover"))
+        }
+        guard topChartCover, !Task.isCancelled,
+              let result = try? await store.catalog("chart-cover", ["source": item.source, "id": item.catalogID]),
+              let address = result.rows("list").first?.string("img"), let url = URL(string: address),
+              await ArtworkCache.shared.image(url) != nil, !Task.isCancelled, ChartArtworkSettings.topCoverEnabled else { return }
+        chartsCover = url
     }
     private func loadLibraryCovers() async {
         localCovers = []; libraryCovers = []

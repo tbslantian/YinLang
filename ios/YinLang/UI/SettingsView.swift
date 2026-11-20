@@ -215,10 +215,15 @@ struct PluginSettingsView: View {
     @AppStorage("playlist-update-hours") private var updateHours = 6
     @AppStorage(NextTrackSettings.parseKey) private var preparse = true
     @AppStorage(NextTrackSettings.cacheKey) private var precache = false
+    @AppStorage(ChartArtworkSettings.topCoverKey) private var topChartCover = true
     var body: some View {
         AndroidForm {
             if !books { AndroidSection("在线播放") { QualityPicker(quality: $quality); Text("播放会在所选音质失败后逐级回退；下载使用所选档位。").font(.caption).foregroundStyle(Palette.muted) } }
             if !books {
+                AndroidSection("排行榜封面") {
+                    Toggle("获取榜首封面", isOn: $topChartCover).accessibilityIdentifier("music-chart-top-cover")
+                    Text("默认开启，优先显示榜单第一首歌曲的封面，获取失败时显示榜单原图。关闭后可减少封面请求。").font(.caption).foregroundStyle(Palette.muted)
+                }
                 AndroidSection("下一首准备") {
                     Toggle("预解析下一首", isOn: $preparse).accessibilityIdentifier("music-preparse-next")
                     Text("当前歌曲播放到 70% 后解析下一首，切歌时复用已验证的地址。").font(.caption).foregroundStyle(Palette.muted)

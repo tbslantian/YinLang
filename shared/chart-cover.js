@@ -24,7 +24,7 @@ export function makeChartCoverLoader({ httpFetch, weapi }) {
       if (track) cover = charts.filterData([track])[0]?.img || ''
     } else if (source === 'mg') {
       const result = await miguChartCovers(charts)
-      cover = result.list.find(row => row.id === String(id).replace(/^mg__/, ''))?.cover || ''
+      cover = result.list.find(row => row.id === String(id).replace(/^mg__/, ''))?.topCover || ''
     } else if (source === 'kw') {
       // Isolate the limit; concurrent chart browsing must keep its normal page size.
       const single = Object.create(charts)
@@ -33,6 +33,7 @@ export function makeChartCoverLoader({ httpFetch, weapi }) {
       cover = data?.list?.[0]?.img || ''
     }
     // Sources without a one-song endpoint keep the placeholder instead of fetching a full chart.
-    return { list: cover ? [{ img: cover, source }] : [] }
+    const artwork = typeof cover === 'string' ? cover.trim().replace(/^\/\//, 'https://').replaceAll('{size}', '400') : ''
+    return { list: artwork ? [{ img: artwork, source }] : [] }
   }
 }

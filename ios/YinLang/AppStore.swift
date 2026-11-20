@@ -69,6 +69,7 @@ final class AppStore: ObservableObject {
     }
     func invalidate(_ id: String) { runtimes.removeValue(forKey: id)?.close(); starts.removeValue(forKey: id)?.cancel() }
     func catalog(_ operation: String, _ args: JSONObject, refresh: Bool = false) async throws -> JSONObject {
+        if operation == "chart-cover", !ChartArtworkSettings.topCoverEnabled { return ["list": [JSONObject]()] }
         guard !refresh, operation == "chart-cover" || operation == "chart-covers" else {
             return try await loadCatalog(operation, args, refresh: refresh)
         }
@@ -85,7 +86,9 @@ final class AppStore: ObservableObject {
 #endif
         let artworkLookup = operation == "chart-cover" || operation == "chart-covers"
         // A new namespace bypasses the old cached empty Migu artwork responses.
-        let prefix = artworkLookup ? "artwork-v2-" : operation == "charts" && args.string("source") == "mg" ? "charts-v2-" : "catalog-"
+        // Keep first-song artwork separate from platform board artwork, also
+        // bypassing older Migu responses that stored a board image as top art.
+        let prefix = operation == "chart-cover" ? "chart-top-v3-" : artworkLookup ? "artwork-v2-" : operation == "charts" && args.string("source") == "mg" ? "charts-v2-" : "catalog-"
         let key = prefix + Disk.hash(operation + jsonText(args)) + ".json"
         let file = Disk.directory(Disk.cache.appendingPathComponent("catalog")).appendingPathComponent(key)
         if !refresh, let info = try? file.resourceValues(forKeys: [.contentModificationDateKey]), Date().timeIntervalSince(info.contentModificationDate ?? .distantPast) < 10800,

@@ -19,6 +19,7 @@ export function miguChartCovers(charts) {
     const response = await isolated.getBoardsData()
     if (response?.statusCode !== 200 || response.body?.code !== '000000') throw Error('咪咕未返回榜单封面')
     const covers = new Map(categoryCovers)
+    const topCovers = new Map()
     function visit(value) {
       if (Array.isArray(value)) { value.forEach(visit); return }
       if (!value || typeof value !== 'object') return
@@ -27,11 +28,18 @@ export function miguChartCovers(charts) {
       if (id && typeof cover === 'string' && /^(?:https?:)?\/\//i.test(cover.trim())) {
         covers.set(String(id), cover.trim().replace(/^\/\//, 'https://'))
       }
+      // Some index sections include a small song preview. Only its first song
+      // is top artwork; imageUrl on the board itself may be a fixed banner.
+      const firstSong = value.contents?.[0]
+      const topCover = firstSong?.img || firstSong?.objectInfo?.albumImgs?.[0]?.img
+      if (id && typeof topCover === 'string' && /^(?:https?:)?\/\//i.test(topCover.trim())) {
+        topCovers.set(String(id), topCover.trim().replace(/^\/\//, 'https://'))
+      }
       // Only walk board containers, never decode songData or request songs.
       for (const key of ['data', 'contents', 'contentItemList', 'itemList']) visit(value[key])
     }
     visit(response.body)
-    return { list: [...covers].map(([id, cover]) => ({ id, cover })) }
+    return { list: [...covers].map(([id, cover]) => ({ id, cover, topCover: topCovers.get(id) || '' })) }
   })()
   pending.set(charts, { time: Date.now(), promise })
   promise.catch(() => { if (pending.get(charts)?.promise === promise) pending.delete(charts) })

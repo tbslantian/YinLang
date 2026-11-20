@@ -2,6 +2,14 @@ import Foundation
 
 typealias JSONObject = [String: Any]
 
+enum ChartArtworkSettings {
+    static let topCoverKey = "music-chart-top-cover"
+    static var topCoverEnabled: Bool {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: topCoverKey) == nil || defaults.bool(forKey: topCoverKey)
+    }
+}
+
 enum AppFailure: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }

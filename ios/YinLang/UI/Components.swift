@@ -4,8 +4,44 @@ struct Artwork: View {
     @EnvironmentObject var store: AppStore
     var item: MediaItem
     var size: CGFloat = 44
+    @ViewBuilder var body: some View {
+        if item.kind == "chart" { ChartCoverArtwork(item: item) { image in bitmap(image) } }
+        else { bitmap(store.artwork(item)) }
+    }
+    private func bitmap(_ url: URL?) -> some View {
+        RemoteImage(url: url) { image in image.resizable().scaledToFill().frame(width: size, height: size).clipped() } placeholder: { ZStack { Color(rgb: item.kind == "book" || item.kind == "episode" ? 0xf1e2cc : 0x173c33); Image(item.kind == "book" || item.kind == "episode" ? "android-hero_books" : "yinlang_neon").resizable().scaledToFit().padding(size * 0.1) } }.frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: size > 100 ? 19 : 9)).allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
+// Board metadata is only the fallback. A valid board image must never suppress
+// the optional first-song artwork lookup in cards, list rows or followed charts.
+struct ChartCoverArtwork<Content: View>: View {
+    @EnvironmentObject private var store: AppStore
+    @AppStorage(ChartArtworkSettings.topCoverKey) private var topChartCover = true
+    let item: MediaItem
+    let chart: Bool
+    let content: (URL?) -> Content
+    @State private var cover: URL?
+    init(item: MediaItem, chart: Bool = true, @ViewBuilder content: @escaping (URL?) -> Content) {
+        self.item = item; self.chart = chart; self.content = content
+    }
+    private var fetchTop: Bool { chart && topChartCover }
     var body: some View {
-        RemoteImage(url: store.artwork(item)) { image in image.resizable().scaledToFill().frame(width: size, height: size).clipped() } placeholder: { ZStack { Color(rgb: item.kind == "book" || item.kind == "episode" ? 0xf1e2cc : 0x173c33); Image(item.kind == "book" || item.kind == "episode" ? "android-hero_books" : "yinlang_neon").resizable().scaledToFit().padding(size * 0.1) } }.frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: size > 100 ? 19 : 9)).allowsHitTesting(false).accessibilityHidden(true)
+        content((fetchTop ? cover : nil) ?? store.artwork(item))
+            .task(id: item.id + "|" + item.cover + "|" + String(fetchTop)) {
+                cover = nil
+                guard fetchTop, let result = try? await store.catalog("chart-cover", ["source": item.source, "id": item.catalogID]),
+                      !Task.isCancelled, ChartArtworkSettings.topCoverEnabled,
+                      let address = result.rows("list").first?.string("img"),
+                      let url = URL(string: address), ["https", "http", "fixture"].contains(url.scheme?.lowercased() ?? "") else { return }
+                // Keep a usable platform cover if the first-song image URL is
+                // returned but the actual image cannot be loaded.
+#if DEBUG
+                if url.scheme == "fixture" { cover = url; return }
+#endif
+                guard await ArtworkCache.shared.image(url) != nil, !Task.isCancelled,
+                      ChartArtworkSettings.topCoverEnabled else { return }
+                cover = url
+            }
     }
 }
 struct MediaRow: View {
@@ -144,18 +180,17 @@ struct ModuleCard: View {
     }
 }
 struct CatalogCard: View {
-    @EnvironmentObject var store: AppStore
     let item: MediaItem
     let chart: Bool
     var height: CGFloat = 154
-    @State private var cover: URL?
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            FrostedArtwork(color: Color(rgb: 0x62466d), image: cover ?? store.artwork(item), seed: item.id)
-            VStack(alignment: .leading, spacing: 4) { Text(item.title).font(.system(size: 16, weight: .bold)).lineLimit(2); if !chart { Text(item.raw.string("author", "name")).font(.system(size: 11)).lineLimit(1) } }.foregroundStyle(.white).shadow(color: .black.opacity(0.8), radius: 3, y: 1).padding(16)
-            Text(Platform(rawValue: item.source)?.title ?? "").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.ink).padding(.horizontal, 8).padding(.vertical, 5).background(.ultraThinMaterial, in: Capsule()).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(9)
-        }.frame(maxWidth: .infinity).frame(height: height).clipShape(RoundedRectangle(cornerRadius: 17)).overlay { RoundedRectangle(cornerRadius: 17).stroke(.white.opacity(0.3), lineWidth: 1).allowsHitTesting(false) }.contentShape(RoundedRectangle(cornerRadius: 17))
-            .task(id: item.id) { if chart && item.cover.isEmpty, let result = try? await store.catalog("chart-cover", ["source": item.source, "id": item.catalogID]) { cover = result.rows("list").first.flatMap { URL(string: $0.string("img")) } } }
+        ChartCoverArtwork(item: item, chart: chart) { image in
+            ZStack(alignment: .bottomLeading) {
+                FrostedArtwork(color: Color(rgb: 0x62466d), image: image, seed: item.id)
+                VStack(alignment: .leading, spacing: 4) { Text(item.title).font(.system(size: 16, weight: .bold)).lineLimit(2); if !chart { Text(item.raw.string("author", "name")).font(.system(size: 11)).lineLimit(1) } }.foregroundStyle(.white).shadow(color: .black.opacity(0.8), radius: 3, y: 1).padding(16)
+                Text(Platform(rawValue: item.source)?.title ?? "").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.ink).padding(.horizontal, 8).padding(.vertical, 5).background(.ultraThinMaterial, in: Capsule()).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(9)
+            }.frame(maxWidth: .infinity).frame(height: height).clipShape(RoundedRectangle(cornerRadius: 17)).overlay { RoundedRectangle(cornerRadius: 17).stroke(.white.opacity(0.3), lineWidth: 1).allowsHitTesting(false) }.contentShape(RoundedRectangle(cornerRadius: 17))
+        }
     }
 }
 func clockText(_ seconds: Double) -> String { guard seconds.isFinite else { return "0:00" }; let value = Int(max(0, seconds)); return value >= 3600 ? String(format: "%d:%02d:%02d", value / 3600, value / 60 % 60, value % 60) : String(format: "%d:%02d", value / 60, value % 60) }
