@@ -208,7 +208,7 @@ struct PlayerView: View {
     }
     private func tool(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View { Button(action: action) { YLIcon(systemName: icon, size: 22).frame(maxWidth: .infinity).frame(height: 44) }.accessibilityLabel(label) }
 }
-private struct PlayerBackdrop: View, Equatable {
+struct PlayerBackdrop: View, Equatable {
     let url: URL?
     let size: CGSize
     let dark: Bool
@@ -216,7 +216,7 @@ private struct PlayerBackdrop: View, Equatable {
         RemoteImage(url: url) { image in image.resizable().scaledToFill().frame(width: size.width, height: size.height).clipped().blur(radius: 75).opacity(dark ? 0.35 : 0.22) } placeholder: { Color.clear }
     }
 }
-private struct PlayerVinyl: View {
+struct PlayerVinyl: View {
     let item: MediaItem
     let edge: CGFloat
     let playing: Bool

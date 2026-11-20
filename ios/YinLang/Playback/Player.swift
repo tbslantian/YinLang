@@ -37,6 +37,7 @@ final class Player: ObservableObject {
     private var load: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
     private var externalMetadata = ExternalPlaybackMetadata()
+    private var externalPlaybackBeforeTelevision: (allowed: Bool, whileMirroring: Bool)?
     private var audioInfoTask: Task<Void, Never>?
     private var cacheTask: Task<Void, Never>?
     private typealias ResolvedAudio = (URL, [String: String], String)
@@ -352,6 +353,22 @@ final class Player: ObservableObject {
     }
     func refreshAirPlayRoute() {
         refreshAudioOutput(); updateExternalMetadata(); updateNowPlaying()
+    }
+    func beginTelevisionPresentation() {
+        guard externalPlaybackBeforeTelevision == nil else { return }
+        externalPlaybackBeforeTelevision = (audio.allowsExternalPlayback, audio.usesExternalPlaybackWhileExternalScreenIsActive)
+        // Render our own picture through system screen mirroring. AVPlayer's
+        // external video presentation can otherwise cover it with an audio-only
+        // receiver screen. The AVAudioSession still routes audio to AirPlay.
+        audio.usesExternalPlaybackWhileExternalScreenIsActive = false
+        audio.allowsExternalPlayback = false
+    }
+    func endTelevisionPresentation() {
+        guard let previous = externalPlaybackBeforeTelevision else { return }
+        externalPlaybackBeforeTelevision = nil
+        audio.usesExternalPlaybackWhileExternalScreenIsActive = previous.whileMirroring
+        audio.allowsExternalPlayback = previous.allowed
+        refreshAirPlayRoute()
     }
     private func refreshAudioOutput() {
         let outputs = AVAudioSession.sharedInstance().currentRoute.outputs

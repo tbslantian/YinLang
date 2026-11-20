@@ -2,8 +2,10 @@ import SwiftUI
 
 struct CastView: View {
     @EnvironmentObject var player: Player
+    @EnvironmentObject var store: AppStore
     @StateObject private var dlna: DLNA
     @State private var address = ""
+    @State private var television = false
     init(player: Player) { _dlna = StateObject(wrappedValue: player.dlna) }
     var body: some View {
         NavigationStack {
@@ -15,8 +17,10 @@ struct CastView: View {
                     Text("Apple TV 音量不可调时，请用电视或功放遥控器；也可在 Apple TV“设置 → 遥控器与设备 → 音量控制”中检查自动或 HDMI 设置。").font(.caption).foregroundStyle(Palette.muted)
                     if dlna.current != nil { Button("停止 DLNA，切回系统音频") { Task { await player.stopCasting() } } }
                 }
-                AndroidSection("封面与歌词") {
-                    Text("封面和歌曲信息由接收设备显示。歌词提供静态文本，接收设备可能不显示；观看同步歌词可使用系统屏幕镜像，并打开播放器歌词页。").font(.caption).foregroundStyle(Palette.muted)
+                AndroidSection("电视画面") {
+                    Button { television = true } label: { Label("打开封面／唱片与同步歌词", systemImage: "tv") }.disabled(player.current == nil || dlna.current != nil)
+                    Text("在控制中心选择“屏幕镜像 → Apple TV”，再打开电视画面并将手机或平板横放。可切换封面／旋转唱片、显示／隐藏歌词；播放时请保持音浪在前台，电视画面会保持屏幕常亮。").font(.caption).foregroundStyle(Palette.muted)
+                    Text("只选择上面的音频投送设备时，电视显示的是 Apple TV 系统播放界面，无法显示音浪的唱片和同步歌词。屏幕镜像需要在控制中心手动开启。").font(.caption).foregroundStyle(Palette.muted)
                 }
                 AndroidSection("DLNA 音频设备") {
                     Button("搜索局域网设备") { Task { await dlna.search() } }.disabled(dlna.searching)
@@ -34,6 +38,6 @@ struct CastView: View {
                 }
                 AndroidSection { Text("DLNA 转发当前音频与所需请求头；接收设备需要支持文件的音频格式。HLS 不进行转码。").font(.caption).foregroundStyle(Palette.muted) }
             }.androidPage("投送").task { await dlna.search() }
-        }
+        }.fullScreenCover(isPresented: $television) { TelevisionView().environmentObject(store).environmentObject(player) }
     }
 }
