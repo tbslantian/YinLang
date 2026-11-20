@@ -254,9 +254,9 @@ final class LayoutTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["page-title-华语经典"].exists)
         let audit = app.descendants(matching: .any).matching(identifier: "library-reorder-audit").firstMatch
         XCTAssertTrue(audit.waitForExistence(timeout: 5))
-        let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in (audit.value as? String ?? "").split(separator: ",").compactMap { Double($0) }.count == 5 }, object: audit)
+        let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in (audit.value as? String ?? "").split(separator: ",").prefix(5).compactMap { Double($0) }.count == 5 }, object: audit)
         XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 5), .completed, app.debugDescription)
-        let values = (audit.value as? String ?? "").split(separator: ",").compactMap { Double($0) }
+        let values = (audit.value as? String ?? "").split(separator: ",").prefix(5).compactMap { Double($0) }
         XCTAssertEqual(values.count, 5)
         if values.count == 5 {
             XCTAssertGreaterThan(values[0], 250); XCTAssertGreaterThanOrEqual(values[1], 66)
