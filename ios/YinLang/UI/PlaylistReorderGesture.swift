@@ -55,6 +55,10 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         private var maximumSizeError: CGFloat = 0
         private var moveCount = 0
         private var scrollDistance: CGFloat = 0
+        private var timerTicks = 0
+        private var edgeTicks = 0
+        private var lastViewport = CGRect.zero
+        private var lastScrollMaximum: CGFloat = 0
 #endif
         init(_ parent: PlaylistReorderGesture) { self.parent = parent }
         func attach(_ view: Anchor) {
@@ -140,7 +144,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
                 snapshot.layer.cornerRadius = 16
                 window.addSubview(snapshot); lifted = snapshot
 #if DEBUG
-                originalSize = rect.size; maximumSizeError = 0; moveCount = 0; scrollDistance = 0
+                originalSize = rect.size; maximumSizeError = 0; moveCount = 0; scrollDistance = 0; timerTicks = 0; edgeTicks = 0
 #endif
                 // Once the stationary long press wins, normal gesture
                 // arbitration keeps the pan from starting. Disabling the
@@ -183,6 +187,10 @@ struct PlaylistReorderGesture: UIViewRepresentable {
         private func tick() {
             let now = ProcessInfo.processInfo.systemUptime
             let dt = min(0.1, max(0.016, now - timestamp)); timestamp = now
+            if let window = anchor?.window, let gesture { finger = gesture.location(in: window) }
+#if DEBUG
+            timerTicks += 1
+#endif
             scrollAtEdge(seconds: dt)
         }
         private func scrollAtEdge(seconds: CFTimeInterval) {
@@ -193,7 +201,13 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             let down = max(0, min(1, (finger.y - viewport.maxY + edge) / edge))
             let minimum = -scroll.adjustedContentInset.top
             let maximum = max(minimum, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
-            let y = min(maximum, max(minimum, scroll.contentOffset.y + (down - up) * 620 * seconds))
+            // Android advances by a fixed step once inside the edge zone.
+            // Very slow movement near its boundary must still keep scrolling.
+            let direction: CGFloat = down > 0 ? 1 : up > 0 ? -1 : 0
+            let y = min(maximum, max(minimum, scroll.contentOffset.y + direction * 400 * seconds))
+#if DEBUG
+            if direction != 0 { edgeTicks += 1 }; lastViewport = viewport; lastScrollMaximum = maximum
+#endif
             if abs(y - scroll.contentOffset.y) > 0.1 {
 #if DEBUG
                 scrollDistance += abs(y - scroll.contentOffset.y)
@@ -208,7 +222,7 @@ struct PlaylistReorderGesture: UIViewRepresentable {
             key = nil
 #if DEBUG
             if UITestFixtures.active {
-                parent.report("\(originalSize.width),\(originalSize.height),\(maximumSizeError),\(moveCount),\(scrollDistance)")
+                parent.report("\(originalSize.width),\(originalSize.height),\(maximumSizeError),\(moveCount),\(scrollDistance),ticks=\(timerTicks);edge=\(edgeTicks);finger=\(finger.y);viewport=\(lastViewport);maximum=\(lastScrollMaximum);offset=\(scroll?.contentOffset.y ?? 0)")
             }
 #endif
             let destination = slots.indices.contains(target) ? anchor.convert(slots[target], to: window) : lifted.frame

@@ -254,7 +254,7 @@ final class LayoutTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["page-title-华语经典"].exists)
         let audit = app.descendants(matching: .any).matching(identifier: "library-reorder-audit").firstMatch
         XCTAssertTrue(audit.waitForExistence(timeout: 5))
-        let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in (audit.value as? String ?? "").split(separator: ",").count == 5 }, object: audit)
+        let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in (audit.value as? String ?? "").split(separator: ",").compactMap { Double($0) }.count == 5 }, object: audit)
         XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 5), .completed, app.debugDescription)
         let values = (audit.value as? String ?? "").split(separator: ",").compactMap { Double($0) }
         XCTAssertEqual(values.count, 5)
@@ -262,7 +262,7 @@ final class LayoutTests: XCTestCase {
             XCTAssertGreaterThan(values[0], 250); XCTAssertGreaterThanOrEqual(values[1], 66)
             XCTAssertLessThanOrEqual(values[2], 1, "整个拖动过程浮层都必须保持原宽高")
             XCTAssertGreaterThanOrEqual(values[3], 2, "松手前必须连续换位")
-            XCTAssertGreaterThan(values[4], 20, "靠近底边必须自动滚动")
+            XCTAssertGreaterThan(values[4], 20, "靠近底边必须自动滚动：\(audit.value ?? "")")
         }
         capture("library-full-size-reorder")
         app.terminate()
