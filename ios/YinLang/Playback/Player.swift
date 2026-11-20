@@ -63,7 +63,11 @@ final class Player: ObservableObject {
     private var lastRemotePoll = Date.distantPast
     var current: MediaItem? { queue.indices.contains(index) ? queue[index] : nil }
     init() {
-        audio.allowsExternalPlayback = true
+        // Route music through AVAudioSession, leaving Apple TV's audio Now
+        // Playing screen to display our artwork. AVPlayer's remote video
+        // presentation has no picture to render for these audio-only items.
+        audio.allowsExternalPlayback = false
+        audio.usesExternalPlaybackWhileExternalScreenIsActive = false
         refreshAudioOutput()
         clock = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in Task { @MainActor in
             guard let self else { return }
@@ -131,7 +135,7 @@ final class Player: ObservableObject {
     }
     private func start(useLocal: Bool = true, resumeAt: Double? = nil, prepared: Task<ResolvedAudio, Error>? = nil, allowCacheWrites: Bool = true) {
         guard let current, let store else { return }
-        load?.cancel(); artworkTask?.cancel(); audioInfoTask?.cancel(); cacheTask?.cancel(); cancelPreparation(); itemObservation = nil
+        load?.cancel(); artworkTask?.cancel(); artworkTask = nil; audioInfoTask?.cancel(); cacheTask?.cancel(); cancelPreparation(); itemObservation = nil
         noticeTask?.cancel(); resolutionNotice = nil; resolutionSucceeded = prepared != nil; audioInfo = AudioStreamInfo()
         if let failureObserver { NotificationCenter.default.removeObserver(failureObserver); self.failureObserver = nil }
         audio.pause(); audio.replaceCurrentItem(with: nil)
@@ -144,6 +148,10 @@ final class Player: ObservableObject {
             if current.kind == "episode" { speed = UserDefaults.standard.float(forKey: "speed:" + current.raw.string("_book")); if speed < 0.25 { speed = 1 } }
             else { speed = 1 }
         }
+        // Start artwork alongside URL resolution, so system AirPlay already
+        // has it when the user selects a receiver, even with the player closed.
+        prepareArtwork(for: current, token: token)
+        updateNowPlaying()
         load = Task {
             do {
                 let progress: (ResolutionNotice) -> Void = { [weak self] notice in
@@ -218,13 +226,6 @@ final class Player: ObservableObject {
                         await self.announceCached(current.title, token: token)
                         _ = cached
                     }
-                }
-                artworkTask = Task { [weak self] in
-                    guard let self, let imageURL = store.artwork(current), let image = await ArtworkCache.shared.image(imageURL), !Task.isCancelled, self.generation == token else { return }
-                    let jpeg = await Task.detached(priority: .utility) { image.jpegData(compressionQuality: 0.85) }.value
-                    guard !Task.isCancelled, self.generation == token else { return }
-                    self.externalMetadata.setArtwork(image, jpeg: jpeg)
-                    self.updateExternalMetadata(); self.updateNowPlaying()
                 }
                 if current.kind == "song" {
                     let text = await store.lyrics(current)
@@ -350,7 +351,10 @@ final class Player: ObservableObject {
         }
     }
     func prepareAirPlayRoutePicker() {
-        guard current != nil, dlna.current == nil else { return }
+        guard let current, dlna.current == nil else { return }
+        audio.allowsExternalPlayback = false
+        audio.usesExternalPlaybackWhileExternalScreenIsActive = false
+        if externalMetadata.artwork == nil { prepareArtwork(for: current, token: generation) }
         do { try activateAudioSession(); updateExternalMetadata(); updateNowPlaying() }
         catch { store?.message = error.localizedDescription }
     }
@@ -403,6 +407,19 @@ final class Player: ObservableObject {
     private func updateExternalMetadata() {
         guard let current, dlna.current == nil else { return }
         audio.currentItem?.externalMetadata = externalMetadata.items(for: current)
+    }
+    private func prepareArtwork(for item: MediaItem, token: UUID) {
+        guard artworkTask == nil, let url = store?.artwork(item) else { return }
+        if let image = ArtworkCache.shared.memoryImage(url) { externalMetadata.setArtwork(image, jpeg: nil) }
+        artworkTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.generation == token { self.artworkTask = nil } }
+            guard let image = await ArtworkCache.shared.image(url), !Task.isCancelled, self.generation == token else { return }
+            let jpeg = await Task.detached(priority: .utility) { image.jpegData(compressionQuality: 0.85) }.value
+            guard !Task.isCancelled, self.generation == token else { return }
+            self.externalMetadata.setArtwork(image, jpeg: jpeg)
+            self.updateExternalMetadata(); self.updateNowPlaying()
+        }
     }
     func resume() {
         if let receiver = dlna.current { playing = true; Task { _ = try? await dlna.soap(receiver, action: "Play", values: [("Speed", "1")]) }; return }
@@ -479,7 +496,10 @@ final class Player: ObservableObject {
         info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
         info[MPNowPlayingInfoPropertyPlaybackQueueIndex] = index
         info[MPNowPlayingInfoPropertyPlaybackQueueCount] = queue.count
-        info[MPMediaItemPropertyPlaybackDuration] = duration; info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed; info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? speed : 0
+        info[MPMediaItemPropertyPlaybackDuration] = duration > 0 ? duration : current.duration
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
+        info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = speed
+        info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? speed : 0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 }

@@ -201,7 +201,12 @@ struct PlayerView: View {
                 }
                 tool(dark ? "sun.max" : "moon", "播放器明暗") { dark.toggle() }
                 tool("timer", "定时关闭") { sleep = true }
-                tool("airplayaudio", "投送") { cast = true }.accessibilityIdentifier("player-cast")
+                if player.casting {
+                    tool("hifispeaker", "管理 DLNA 投送") { cast = true }.accessibilityIdentifier("player-cast")
+                } else {
+                    AirPlayPicker(dark: dark, tintColor: UIColor(accent)).frame(maxWidth: .infinity).frame(height: 44)
+                        .accessibilityLabel("AirPlay 投送").accessibilityIdentifier("player-cast")
+                }
                 tool("list.bullet", "播放队列") { player.showQueue = true }
             }
         }.buttonStyle(.plain)
@@ -350,12 +355,13 @@ struct PlayerChoice: View {
 struct AirPlayPicker: UIViewRepresentable {
     @EnvironmentObject private var player: Player
     var dark: Bool
+    var tintColor: UIColor? = nil
     func makeCoordinator() -> Coordinator { Coordinator(player: player) }
     func makeUIView(context: Context) -> AVRoutePickerView {
         let view = AVRoutePickerView(); view.prioritizesVideoDevices = false; view.delegate = context.coordinator; return view
     }
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {
-        context.coordinator.player = player; uiView.tintColor = dark ? .white : .darkGray; uiView.activeTintColor = .systemMint
+        context.coordinator.player = player; uiView.tintColor = tintColor ?? (dark ? .white : .darkGray); uiView.activeTintColor = .systemMint
     }
     @MainActor
     final class Coordinator: NSObject, AVRoutePickerViewDelegate {

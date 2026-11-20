@@ -2,6 +2,14 @@
 
 原生 SwiftUI 通用应用，最低 iOS / iPadOS 17。iPhone 与 iPad 使用同一套安卓页面结构，iPad 仅扩展可用宽度、封面网格列数并支持横竖屏，不增加侧栏。首页默认经典影像，直接复用安卓版 `home_music_light/dark`、`home_books_light/dark` 原图。
 
+## 0.8.22 直接 AirPlay 音乐投送
+
+构建号 25。播放器底部 AirPlay 按钮直接使用系统设备选择器，点按后选设备即可投送音乐、封面和歌曲信息，不需要在手机或平板打开“封面／唱片与同步歌词”。正在使用 DLNA 时保留投送管理入口；菜单中的投送页保留 DLNA 搜索／按 IP 连接，屏幕镜像画面改为可选折叠项。
+
+默认禁用 AVPlayer 外部视频播放及镜像时的视频接管，普通音乐使用长音频系统会话输出，让接收设备使用自己的音乐正在播放界面。封面与播放地址并行准备，内存命中时立即提供，异步图片到达后同步系统正在播放和播放项元数据，设备选择前再次提交。切歌持续更新封面、标题、专辑、歌手、时长、进度与速率，不依赖打开播放器页面。镜像功能仍可单独使用。
+
+Apple TV 负责大封面的布局和是否进入全屏播放，应用不能强制切换电视页面；此模式不自动提供旋转唱片或同步歌词。参考 [Apple 正在播放信息](https://developer.apple.com/documentation/mediaplayer/mpnowplayinginfocenter)及[AirPlay 音频元数据说明](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/AirPlayGuide/EnrichYourAppforAirPlay/EnrichYourAppforAirPlay.html)。本版未做 Apple TV 真机验收。沿用用户要求，不运行测试，启动 iPhone／iPad 通用设备编译后结束，不等待完成、不发布下载链接。
+
 ## 0.8.21 镜像音频路由与 DLNA 搜索
 
 构建号 24。针对手机歌词正常、电视仅显示封面的实机反馈，电视画面期间改用跟随屏幕镜像的默认音频路由策略，不再在切歌或继续播放时重设为共享的长音频输出；关闭画面恢复原配置。镜像音频切换不触发 AirPlay 拔出暂停。电视画面点按后显示是否检测到画面共享，该状态同时包含屏幕镜像与录屏，无法据此独立确认 Apple TV 连接。投送页补充关闭音频投送、重新开启控制中心屏幕镜像的操作说明。
