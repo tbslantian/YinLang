@@ -18,15 +18,16 @@ struct ResolutionNotice: Identifiable {
 
 struct ResolutionNoticeView: View {
     @EnvironmentObject private var player: Player
+    var color: Color = Palette.accent
     var body: some View {
         if let notice = player.resolutionNotice {
             VStack(spacing: 3) {
                 HStack(spacing: 5) {
-                    if notice.phase == .resolving || notice.phase == .validating { ProgressView().controlSize(.mini).tint(Palette.accent) }
+                    if notice.phase == .resolving || notice.phase == .validating { ProgressView().controlSize(.mini).tint(color) }
                     Text(notice.title).font(.system(size: 13, weight: .bold)).lineLimit(1)
                 }.frame(maxWidth: .infinity)
                 if !notice.detail.isEmpty { Text(notice.detail).font(.system(size: 11)).lineLimit(1) }
-            }.foregroundStyle(Palette.accent).multilineTextAlignment(.center).frame(maxWidth: .infinity)
+            }.foregroundStyle(color).multilineTextAlignment(.center).frame(maxWidth: .infinity)
                 .accessibilityElement(children: .combine).accessibilityIdentifier("resolution-notice")
                 .allowsHitTesting(false)
         }

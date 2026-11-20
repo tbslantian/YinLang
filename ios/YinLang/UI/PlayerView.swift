@@ -87,6 +87,9 @@ struct PlayerView: View {
                         }.padding(.horizontal, compact ? 16 : 26).padding(.bottom, compact ? 4 : 12)
                     } else {
                         stage.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.horizontal, 20)
+                        .overlay(alignment: .bottom) {
+                            if fullLyrics { ResolutionNoticeView(color: accent).frame(maxWidth: 340).padding(.horizontal, 20).padding(.bottom, 12) }
+                        }
                         .contentShape(Rectangle())
                         .simultaneousGesture(DragGesture(minimumDistance: 20).onEnded { value in
                             guard player.current?.kind != "episode", abs(value.translation.width) >= 42,
@@ -141,9 +144,18 @@ struct PlayerView: View {
             GeometryReader { metadata in
               HStack(spacing: 7) {
                 VStack(alignment: .leading, spacing: tight ? 3 : 6) { Text(player.current?.title ?? "音浪").font(.system(size: tight ? 18 : 23, weight: .bold)).lineLimit(compact ? 1 : 2); Text(player.current?.subtitle ?? "").font(.system(size: tight ? 12 : 14)).foregroundStyle(muted).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading)
+                if metadata.size.width >= 560 {
+                    Color.clear.frame(width: min(300, metadata.size.width * 0.42)).overlay {
+                        ResolutionNoticeView(color: accent)
+                    }
+                }
                 if let item = player.current, item.kind != "episode" { Button { store.toggleLike(item) } label: { YLIcon(systemName: store.isLiked(item) ? "star.fill" : "star", size: 20).frame(width: 44, height: 48) }.accessibilityLabel("收藏歌曲") }
                 Button { menu = true } label: { YLIcon(systemName: "ellipsis", size: 20).frame(width: 44, height: 48) }.accessibilityLabel("播放器菜单")
-              }.frame(height: metadata.size.height)
+              }.frame(height: metadata.size.height).overlay(alignment: .top) {
+                  if metadata.size.width < 560 {
+                      ResolutionNoticeView(color: accent).frame(maxWidth: 340).offset(y: -52)
+                  }
+              }
             }.frame(height: tight ? 54 : 68)
             BufferedProgress(value: player.elapsed, duration: player.duration, buffered: player.buffered, color: accent, change: player.seek).frame(height: tight ? 20 : 26)
             HStack { Text(clockText(player.elapsed)); Spacer(); Text(clockText(player.duration)) }.font(.system(size: 12).monospacedDigit()).foregroundStyle(muted)
