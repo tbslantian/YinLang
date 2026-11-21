@@ -70,6 +70,11 @@ struct SongRow: View {
         if !duration.isEmpty { value += " · " + duration }
         return value
     }
+    private var currentPlayback: Bool { item.kind == "song" && player.current?.id == item.id }
+    private var playbackLabel: String {
+        if currentPlayback && player.loading { return "正在载入 " + item.title }
+        return (currentPlayback && player.playing ? "暂停 " : "播放 ") + item.title
+    }
     var body: some View {
         HStack(spacing: 6) {
             if let rank { Text("\(rank)").font(.system(size: 12, weight: .bold)).foregroundStyle(rank <= 3 ? Palette.accent : Palette.muted).frame(width: 30).padding(.vertical, 5).background(rank <= 3 ? Palette.tint : Palette.soft, in: RoundedRectangle(cornerRadius: 8)).accessibilityIdentifier("song-rank-\(rank)") }
@@ -83,7 +88,22 @@ struct SongRow: View {
                     }.padding(.vertical, 3).frame(maxWidth: .infinity, alignment: .leading)
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
-            Button { if item.source == "library" { store.toggleLike(item) } else { play() } } label: { YLIcon(systemName: item.source == "library" ? (store.isLiked(item) ? "heart.fill" : "heart") : "play.fill", size: 19).frame(width: 44, height: 48).foregroundStyle(Palette.accent) }.buttonStyle(.plain).accessibilityLabel(item.source == "library" ? "服务器收藏" : "播放 " + item.title)
+            if item.source == "library" {
+                Button { store.toggleLike(item) } label: {
+                    YLIcon(systemName: store.isLiked(item) ? "heart.fill" : "heart", size: 19)
+                        .frame(width: 44, height: 48).foregroundStyle(Palette.accent)
+                }.buttonStyle(.plain).accessibilityLabel("服务器收藏")
+            } else {
+                Button {
+                    if currentPlayback { player.toggle() } else { play() }
+                } label: {
+                    Group {
+                        if currentPlayback && player.loading { ProgressView().tint(Palette.accent) }
+                        else { YLIcon(systemName: currentPlayback && player.playing ? "pause.fill" : "play.fill", size: 19) }
+                    }.frame(width: 44, height: 48).foregroundStyle(Palette.accent).contentShape(Rectangle())
+                }.buttonStyle(.plain).disabled(currentPlayback && player.loading)
+                    .accessibilityLabel(playbackLabel).accessibilityIdentifier("song-playback-" + item.id)
+            }
             Button { actions = true } label: { if store.downloading.contains(item.id) { ProgressView().frame(width: 44) } else { YLIcon(systemName: "ellipsis", size: 19).frame(width: 44, height: 48).foregroundStyle(Palette.accent) } }.buttonStyle(.plain).accessibilityLabel("歌曲操作")
         }.padding(.horizontal, 10).padding(.vertical, 11).androidSurface()
             .sheet(isPresented: $actions) { SongActionsView(item: item, remove: remove).environmentObject(store).environmentObject(player) }
