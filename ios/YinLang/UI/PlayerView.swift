@@ -71,12 +71,12 @@ private struct MiniPlayerCover: View {
 
 struct PlayerView: View {
     @EnvironmentObject private var player: Player
-    var body: some View { PlayerScreen(player: player).equatable() }
+    var body: some View { PlayerScreen(player: player) }
 }
 
-// Only presentation publishers drive this shell. Equality keeps unrelated
-// engine changes out of layout; progress has its own independent publisher.
-private struct PlayerScreen: View, Equatable {
+// Progress has its own publisher, so no identity-only equality gate is needed.
+// Track changes must reach both the native artwork and SwiftUI metadata views.
+private struct PlayerScreen: View {
     let engine: Player
     @StateObject private var state: PlayerPresentationState
     @StateObject private var artworkSource = PlayerArtworkSource()
@@ -102,13 +102,15 @@ private struct PlayerScreen: View, Equatable {
         _lyrics = State(initialValue: UITestFixtures.active && UITestFixtures.screen == "lyrics")
 #endif
     }
-    static func == (lhs: Self, rhs: Self) -> Bool { lhs.engine === rhs.engine }
     private var ink: Color { Color(rgb: dark ? 0xfffbff : 0x291e24) }
     private var muted: Color { Color(rgb: dark ? 0xece4ef : 0x624f55) }
     private var accent: Color { Color(rgb: dark ? 0xffcedd : 0x9a3e54) }
     private var controlsAnimation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.22) }
     var body: some View {
-        GeometryReader { proxy in
+        // Capture the value before entering deferred layout closures. Artwork,
+        // labels and actions all render the same current-song snapshot.
+        let current = state.current
+        return GeometryReader { proxy in
             let compact = proxy.size.height < 560
             let wide = proxy.size.width > proxy.size.height
             let hidden = wide ? landscapeControlsHidden : fullLyrics
@@ -122,16 +124,16 @@ private struct PlayerScreen: View, Equatable {
             let lyricWidth = max(0, wide ? proxy.size.width - lyricX - horizontal : proxy.size.width - horizontal * 2)
             let artHeight = max(0, wide ? height : height - footerHeight)
             let edge = max(0, min(wide ? 520 : 350, min(artWidth, artHeight)))
-            let artVisible = state.current != nil && (wide || !lyrics)
+            let artVisible = current != nil && (wide || !lyrics)
             let lyricVisible = wide || lyrics
-            let url = artworkSource.url(for: state.current, store: store)
+            let url = artworkSource.url(for: current, store: store)
             ZStack(alignment: .topLeading) {
                 Color(rgb: dark ? 0x211820 : 0xf0e6e1).ignoresSafeArea()
                 PlayerBackdrop(url: url, size: proxy.size, dark: dark).equatable().ignoresSafeArea().allowsHitTesting(false)
                 // Stable identities across full-screen, artwork/lyrics, record/
                 // cover and orientation changes. Only actual size/content
                 // changes require the native surfaces to measure again.
-                PlayerArtworkSurface(url: url, book: state.current?.kind == "episode", vinyl: vinyl,
+                PlayerArtworkSurface(url: url, book: current?.kind == "episode", vinyl: vinyl,
                                      playing: state.playing, active: artVisible && scenePhase == .active)
                     .frame(width: edge, height: edge)
                     .position(x: horizontal + artWidth / 2, y: handleHeight + artHeight / 2)
@@ -140,7 +142,7 @@ private struct PlayerScreen: View, Equatable {
                     .accessibilityLabel("播放器封面").accessibilityIdentifier(wide ? "player-landscape-artwork" : "player-artwork-stage")
                 NativePlayerLyrics(player: engine, compact: compact, ink: UIColor(ink),
                     visibleHeight: hidden ? height : max(0, height - footerHeight), active: lyricVisible && footerHeight > 0 && scenePhase == .active,
-                    landscape: wide, emptyText: state.current?.kind == "episode" ? "有声书暂无歌词" : "暂无歌词") {
+                    landscape: wide, emptyText: current?.kind == "episode" ? "有声书暂无歌词" : "暂无歌词") {
                         if wide { landscapeControlsHidden.toggle() } else { fullLyrics.toggle() }
                     }
                     .frame(width: lyricWidth, height: height)
@@ -149,7 +151,7 @@ private struct PlayerScreen: View, Equatable {
                     .animation(controlsAnimation, value: lyricVisible)
                     .allowsHitTesting(lyricVisible).accessibilityHidden(!lyricVisible)
                     .simultaneousGesture(DragGesture(minimumDistance: 20).onEnded { value in
-                        guard !wide, state.current?.kind != "episode", abs(value.translation.width) >= 42,
+                        guard !wide, current?.kind != "episode", abs(value.translation.width) >= 42,
                               abs(value.translation.width) > abs(value.translation.height) * 1.25 else { return }
                         lyrics = value.translation.width < 0; fullLyrics = false
                     })
@@ -161,11 +163,11 @@ private struct PlayerScreen: View, Equatable {
                     .position(x: horizontal + artWidth / 2, y: handleHeight + artHeight / 2)
                     .allowsHitTesting(!wide && !lyrics)
                     .gesture(DragGesture(minimumDistance: 20).onEnded { value in
-                        guard state.current?.kind != "episode", abs(value.translation.width) >= 42,
+                        guard current?.kind != "episode", abs(value.translation.width) >= 42,
                               abs(value.translation.width) > abs(value.translation.height) * 1.25 else { return }
                         lyrics = value.translation.width < 0; fullLyrics = false
                     })
-                footer(compact: compact, landscape: wide)
+                footer(current: current, compact: compact, landscape: wide)
                     .padding(.top, compact ? (wide ? 2 : 3) : 10)
                     .padding(.bottom, bottom)
                     .frame(width: max(0, wide ? lyricWidth : proxy.size.width - 50))
@@ -205,32 +207,20 @@ private struct PlayerScreen: View, Equatable {
         .sheet(isPresented: $chooseMode) { PlayerChoice(title: "播放模式", rows: PlayMode.allCases.map { $0.title }, selected: state.mode.title) { value in if let mode = PlayMode.allCases.first(where: { $0.title == value }) { engine.mode = mode } } }
         .sheet(isPresented: $sleep) { PlayerChoice(title: "定时关闭", rows: ["15 分钟","30 分钟","45 分钟","60 分钟","90 分钟","播完当前内容暂停","关闭定时"], selected: "") { value in if value == "播完当前内容暂停" { engine.sleepAfterCurrent = true; engine.sleepUntil = nil } else { engine.setSleep(Int(value.components(separatedBy: " ").first ?? "")) } } }
     }
-    private func footer(compact: Bool, landscape: Bool = false) -> some View {
+    private func footer(current: MediaItem?, compact: Bool, landscape: Bool = false) -> some View {
         let tight = landscape && compact
+        let playing = state.playing
+        let loading = state.loading
         return VStack(spacing: compact ? 3 : 8) {
-            GeometryReader { metadata in
-              HStack(spacing: 7) {
-                VStack(alignment: .leading, spacing: tight ? 3 : 6) { Text(state.current?.title ?? "音浪").font(.system(size: tight ? 18 : 23, weight: .bold)).lineLimit(compact ? 1 : 2); Text(state.current?.subtitle ?? "").font(.system(size: tight ? 12 : 14)).foregroundStyle(muted).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading)
-                if metadata.size.width >= 560 {
-                    Color.clear.frame(width: min(300, metadata.size.width * 0.42)).overlay {
-                        PlayerNotice(player: engine, color: accent)
-                    }
-                }
-                if let item = state.current, item.kind != "episode" { Button { store.toggleLike(item) } label: { YLIcon(systemName: store.isLiked(item) ? "star.fill" : "star", size: 20).frame(width: 44, height: 48) }.accessibilityLabel("收藏歌曲") }
-                Button { menu = true } label: { YLIcon(systemName: "ellipsis", size: 20).frame(width: 44, height: 48) }.accessibilityLabel("播放器菜单")
-              }.frame(height: metadata.size.height).overlay(alignment: .top) {
-                  if metadata.size.width < 560 {
-                      PlayerNotice(player: engine, color: accent).frame(maxWidth: 340).offset(y: -52)
-                  }
-              }
-            }.frame(height: tight ? 54 : 68)
+            PlayerMetadataHeader(engine: engine, state: state, compact: compact, tight: tight,
+                                 muted: muted, accent: accent) { menu = true }
             PlayerProgressSection(player: engine, color: accent, muted: muted, tight: tight, compact: compact)
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
-                Button { qualityItem = state.current } label: {
+                Button { qualityItem = current } label: {
                     Text(state.audioInfo.text).font(.system(size: tight ? 11 : 12, weight: .semibold)).foregroundStyle(muted).lineLimit(1)
                         .frame(minHeight: tight ? 16 : 20).contentShape(Rectangle())
-                }.buttonStyle(.plain).disabled(!PlayerQualityChoice.canSelect(state.current))
+                }.buttonStyle(.plain).disabled(!PlayerQualityChoice.canSelect(current))
                     .accessibilityLabel("音质 " + state.audioInfo.text).accessibilityHint("选择播放音质").accessibilityIdentifier("player-audio-info")
                 Spacer(minLength: 0)
             }.frame(minHeight: tight ? 16 : 20)
@@ -240,14 +230,14 @@ private struct PlayerScreen: View, Equatable {
                 ZStack {
                     trackButton("backward.end.fill", "上一首", "player-previous", size: tight ? 24 : compact ? 28 : 33) { engine.previous() }
                         .offset(x: -controls.size.width / 4)
-                    Button { engine.toggle() } label: { Group { if state.loading { ProgressView().tint(ink) } else { YLIcon(systemName: state.playing ? "pause.fill" : "play.fill", size: tight ? 30 : compact ? 36 : 44) } }.frame(width: tight ? 44 : compact ? 57 : 70, height: tight ? 44 : compact ? 57 : 70) }.accessibilityLabel(state.playing ? "暂停" : "播放")
+                    Button { engine.toggle() } label: { Group { if loading { ProgressView().tint(ink) } else { YLIcon(systemName: playing ? "pause.fill" : "play.fill", size: tight ? 30 : compact ? 36 : 44) } }.frame(width: tight ? 44 : compact ? 57 : 70, height: tight ? 44 : compact ? 57 : 70) }.accessibilityLabel(playing ? "暂停" : "播放")
                     trackButton("forward.end.fill", "下一首", "player-next", size: tight ? 24 : compact ? 28 : 33) { engine.next() }
                         .offset(x: controls.size.width / 4)
                 }.frame(width: controls.size.width, height: controls.size.height)
             }.frame(height: tight ? 44 : compact ? 57 : 70)
             if !compact || state.airPlayActive { SystemVolume().tint(accent).frame(height: 28).padding(.horizontal, 10) }
             HStack(spacing: 0) {
-                if state.current?.kind == "episode" { tool("gobackward.15", "后退15秒") { engine.seek(engine.elapsed - 15) }; tool("goforward.30", "前进30秒") { engine.seek(engine.elapsed + 30) } }
+                if current?.kind == "episode" { tool("gobackward.15", "后退15秒") { engine.seek(engine.elapsed - 15) }; tool("goforward.30", "前进30秒") { engine.seek(engine.elapsed + 30) } }
                 else {
                     if landscape { tool(vinyl ? "photo" : "opticaldisc", vinyl ? "显示封面" : "显示旋转唱片") { vinyl.toggle() } }
                     else { tool("quote.bubble", "显示歌词") { lyrics.toggle(); if !lyrics { fullLyrics = false } } }
@@ -272,6 +262,53 @@ private struct PlayerScreen: View, Equatable {
     }
     private func tool(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View { Button(action: action) { YLIcon(systemName: icon, size: 22).frame(maxWidth: .infinity).frame(height: 44) }.accessibilityLabel(label) }
 }
+// Subscribe at the text's own boundary instead of relying on a parent layout
+// closure to notice mutations of a referenced state object. Only the metadata
+// header refreshes; the volume, AirPlay and progress controls retain identity.
+private struct PlayerMetadataHeader: View {
+    let engine: Player
+    @ObservedObject var state: PlayerPresentationState
+    @EnvironmentObject private var store: AppStore
+    let compact: Bool
+    let tight: Bool
+    let muted: Color
+    let accent: Color
+    let showMenu: () -> Void
+    var body: some View {
+        let current = state.current
+        let title = current?.title ?? "音浪"
+        let subtitle = current?.subtitle ?? ""
+        let liked = current.map(store.isLiked) ?? false
+        return GeometryReader { metadata in
+            HStack(spacing: 7) {
+                VStack(alignment: .leading, spacing: tight ? 3 : 6) {
+                    Text(title).font(.system(size: tight ? 18 : 23, weight: .bold)).lineLimit(compact ? 1 : 2)
+                        .accessibilityIdentifier("player-track-title")
+                    Text(subtitle).font(.system(size: tight ? 12 : 14)).foregroundStyle(muted).lineLimit(1)
+                        .accessibilityIdentifier("player-track-artist")
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                if metadata.size.width >= 560 {
+                    Color.clear.frame(width: min(300, metadata.size.width * 0.42)).overlay {
+                        PlayerNotice(player: engine, color: accent)
+                    }
+                }
+                if let current, current.kind != "episode" {
+                    Button { store.toggleLike(current) } label: {
+                        YLIcon(systemName: liked ? "star.fill" : "star", size: 20).frame(width: 44, height: 48)
+                    }.accessibilityLabel("收藏歌曲")
+                }
+                Button(action: showMenu) {
+                    YLIcon(systemName: "ellipsis", size: 20).frame(width: 44, height: 48)
+                }.accessibilityLabel("播放器菜单")
+            }.frame(height: metadata.size.height).overlay(alignment: .top) {
+                if metadata.size.width < 560 {
+                    PlayerNotice(player: engine, color: accent).frame(maxWidth: 340).offset(y: -52)
+                }
+            }
+        }.frame(height: tight ? 54 : 68)
+    }
+}
+
 private struct PlayerFooterHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
