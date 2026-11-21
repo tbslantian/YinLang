@@ -76,6 +76,7 @@ struct PlayerView: View {
     @State private var sleep = false
     @State private var cast = false
     @State private var chooseMode = false
+    @State private var qualityItem: MediaItem?
     init() {
 #if DEBUG
         _lyrics = State(initialValue: UITestFixtures.active && UITestFixtures.screen == "lyrics")
@@ -135,6 +136,7 @@ struct PlayerView: View {
             .sheet(isPresented: $player.showQueue) { QueueView().environmentObject(store).environmentObject(player) }
             .sheet(isPresented: $menu) { PlayerMenuView().environmentObject(store).environmentObject(player) }
             .sheet(isPresented: $cast) { CastView(player: player).environmentObject(store).environmentObject(player) }
+            .sheet(item: $qualityItem) { item in PlayerQualityChoice(item: item).environmentObject(store).environmentObject(player) }
             .sheet(isPresented: $chooseMode) { PlayerChoice(title: "播放模式", rows: PlayMode.allCases.map { $0.title }, selected: player.mode.title) { value in if let mode = PlayMode.allCases.first(where: { $0.title == value }) { player.mode = mode } } }
             .sheet(isPresented: $sleep) { PlayerChoice(title: "定时关闭", rows: ["15 分钟","30 分钟","45 分钟","60 分钟","90 分钟","播完当前内容暂停","关闭定时"], selected: "") { value in if value == "播完当前内容暂停" { player.sleepAfterCurrent = true; player.sleepUntil = nil } else { player.setSleep(Int(value.components(separatedBy: " ").first ?? "")) } } }
     }
@@ -185,11 +187,25 @@ struct PlayerView: View {
             }.frame(height: tight ? 54 : 68)
             BufferedProgress(value: player.elapsed, duration: player.duration, buffered: player.buffered, color: accent, change: player.seek).frame(height: tight ? 20 : 26)
             HStack { Text(clockText(player.elapsed)); Spacer(); Text(clockText(player.duration)) }.font(.system(size: 12).monospacedDigit()).foregroundStyle(muted)
-            Text(player.audioInfo.text).font(.system(size: tight ? 11 : 12, weight: .semibold)).foregroundStyle(muted).lineLimit(1).frame(maxWidth: .infinity, minHeight: tight ? 16 : 20).accessibilityIdentifier("player-audio-info")
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                Button { qualityItem = player.current } label: {
+                    Text(player.audioInfo.text).font(.system(size: tight ? 11 : 12, weight: .semibold)).foregroundStyle(muted).lineLimit(1)
+                        .frame(minHeight: tight ? 16 : 20).contentShape(Rectangle())
+                }.buttonStyle(.plain).disabled(!PlayerQualityChoice.canSelect(player.current))
+                    .accessibilityLabel("音质 " + player.audioInfo.text).accessibilityHint("选择播放音质").accessibilityIdentifier("player-audio-info")
+                Spacer(minLength: 0)
+            }.frame(minHeight: tight ? 16 : 20)
             GeometryReader { controls in
-                Button { player.previous() } label: { YLIcon(systemName: "backward.end.fill", size: tight ? 24 : compact ? 28 : 33).frame(width: tight ? 44 : compact ? 50 : 62, height: tight ? 44 : compact ? 50 : 62) }.accessibilityLabel("上一首").accessibilityIdentifier("player-previous").position(x: controls.size.width * 0.25, y: controls.size.height / 2)
-                Button { player.toggle() } label: { Group { if player.loading { ProgressView().tint(ink) } else { YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: tight ? 30 : compact ? 36 : 44) } }.frame(width: tight ? 44 : compact ? 57 : 70, height: tight ? 44 : compact ? 57 : 70) }.accessibilityLabel(player.playing ? "暂停" : "播放").position(x: controls.size.width / 2, y: controls.size.height / 2)
-                Button { player.next() } label: { YLIcon(systemName: "forward.end.fill", size: tight ? 24 : compact ? 28 : 33).frame(width: tight ? 44 : compact ? 50 : 62, height: tight ? 44 : compact ? 50 : 62).contentShape(Rectangle()) }.accessibilityLabel("下一首").accessibilityIdentifier("player-next").position(x: controls.size.width * 0.75, y: controls.size.height / 2)
+                // Offset fixed-size controls from the center. position() wraps
+                // its child in a full-size frame; no wrapper should be tappable.
+                ZStack {
+                    trackButton("backward.end.fill", "上一首", "player-previous", size: tight ? 24 : compact ? 28 : 33) { player.previous() }
+                        .offset(x: -controls.size.width / 4)
+                    Button { player.toggle() } label: { Group { if player.loading { ProgressView().tint(ink) } else { YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: tight ? 30 : compact ? 36 : 44) } }.frame(width: tight ? 44 : compact ? 57 : 70, height: tight ? 44 : compact ? 57 : 70) }.accessibilityLabel(player.playing ? "暂停" : "播放")
+                    trackButton("forward.end.fill", "下一首", "player-next", size: tight ? 24 : compact ? 28 : 33) { player.next() }
+                        .offset(x: controls.size.width / 4)
+                }.frame(width: controls.size.width, height: controls.size.height)
             }.frame(height: tight ? 44 : compact ? 57 : 70)
             if !compact || player.airPlayActive { SystemVolume().tint(accent).frame(height: 28).padding(.horizontal, 10) }
             HStack(spacing: 0) {
@@ -210,6 +226,11 @@ struct PlayerView: View {
                 tool("list.bullet", "播放队列") { player.showQueue = true }
             }
         }.buttonStyle(.plain)
+    }
+    private func trackButton(_ icon: String, _ label: String, _ identifier: String, size: CGFloat, action: @escaping () -> Void) -> some View {
+        Button(action: action) { YLIcon(systemName: icon, size: size).contentShape(Rectangle()) }
+            .buttonStyle(.plain).frame(width: size, height: size).clipped().contentShape(.interaction, Rectangle())
+            .accessibilityLabel(label).accessibilityIdentifier(identifier)
     }
     private func tool(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View { Button(action: action) { YLIcon(systemName: icon, size: 22).frame(maxWidth: .infinity).frame(height: 44) }.accessibilityLabel(label) }
 }

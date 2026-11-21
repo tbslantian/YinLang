@@ -124,9 +124,10 @@ struct Navidrome {
         let settings = playbackSettings(original: original)
         return try endpoint(original ? "download" : "stream", [.init(name: "id", value: item.key), .init(name: "maxBitRate", value: settings.bitrate), .init(name: "format", value: settings.format)])
     }
+    static var playbackBitratePreferenceKey: String { NetworkRoute.shared.cellular ? "nav-bitrate-mobile" : "nav-bitrate-wifi" }
     func playbackSettings(original: Bool = false) -> (bitrate: String, format: String) {
         let defaults = UserDefaults.standard
-        let networkKey = NetworkRoute.shared.cellular ? "nav-bitrate-mobile" : "nav-bitrate-wifi"
+        let networkKey = Self.playbackBitratePreferenceKey
         let bitrate = original ? "0" : defaults.string(forKey: networkKey) ?? defaults.string(forKey: "nav-bitrate") ?? "0"
         return (bitrate, bitrate == "0" ? "raw" : defaults.string(forKey: "nav-format") ?? "mp3")
     }

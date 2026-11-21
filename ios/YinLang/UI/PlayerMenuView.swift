@@ -15,6 +15,10 @@ struct PlayerMenuView: View {
     private var current: MediaItem? { player.current }
     private var book: Bool { current?.kind == "episode" }
     private var online: Bool { current?.source != "library" && current?.source != "offline" && !book }
+    private var qualityTitle: String {
+        if current?.source == "library", let bitrate = store.nav?.playbackSettings().bitrate { return bitrate == "0" ? "原始音质" : bitrate + " kbps" }
+        return online ? QualityPicker.options.first { $0.0 == quality }?.1 ?? quality : "原始音质"
+    }
     private var savedBook: MediaItem? { current.flatMap { try? BookPlayback.book(for: $0, shelf: store.bookshelf) } }
     private var saved: Bool {
         if book { return savedBook.map { item in store.bookshelf.contains { $0.id == item.id } } ?? false }
@@ -43,7 +47,7 @@ struct PlayerMenuView: View {
                         Button { destination = .cast } label: { row("airplayaudio", "投送", player.dlna.current?.name ?? "") }.accessibilityIdentifier("player-menu-cast")
                         if !book {
                             Button { destination = .style } label: { row("opticaldisc", "播放器样式", vinyl ? "旋转黑胶" : "方形封面") }.accessibilityIdentifier("player-menu-style")
-                            Button { if online { destination = .quality } } label: { row("music.note", "音质", online ? QualityPicker.options.first { $0.0 == quality }?.1 ?? quality : "原始音质", chevron: online) }.disabled(!online).accessibilityIdentifier("player-menu-quality")
+                            Button { destination = .quality } label: { row("music.note", "音质", qualityTitle, chevron: PlayerQualityChoice.canSelect(current)) }.disabled(!PlayerQualityChoice.canSelect(current)).accessibilityIdentifier("player-menu-quality")
                             Button { destination = .effects } label: { row("slider.horizontal.3", "音效", AudioEffects.shared.config.enabled ? "已开启" : "原声") }.accessibilityIdentifier("player-menu-effects")
                         }
                         Button { destination = .settings } label: { row("gearshape", "播放设置") }.accessibilityIdentifier("player-menu-settings")
@@ -113,11 +117,38 @@ struct PlayerMenuView: View {
         }
         case .cast: CastView(player: player)
         case .style: PlayerChoice(title: "播放器样式", rows: ["旋转黑胶", "方形封面"], selected: vinyl ? "旋转黑胶" : "方形封面") { vinyl = $0 == "旋转黑胶" }
-        case .quality: PlayerChoice(title: "音质", rows: QualityPicker.options.map { $0.1 }, selected: QualityPicker.options.first { $0.0 == quality }?.1 ?? quality) { value in
-            if let option = QualityPicker.options.first(where: { $0.1 == value }) { quality = option.0; player.reloadQuality() }
-        }
+        case .quality: if let current { PlayerQualityChoice(item: current) }
         case .effects: EffectsView()
         case .settings: NavigationStack { PlaybackPreferencesView() }
+        }
+    }
+}
+
+struct PlayerQualityChoice: View {
+    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var player: Player
+    @AppStorage("quality") private var quality = "320k"
+    let item: MediaItem
+    static func canSelect(_ item: MediaItem?) -> Bool {
+        guard let item, item.kind == "song" else { return false }
+        return item.source == "library" || (item.source != "all" && Platform(rawValue: item.source) != nil)
+    }
+    var body: some View {
+        if item.source == "library" {
+            let key = Navidrome.playbackBitratePreferenceKey
+            let cellular = key == "nav-bitrate-mobile"
+            let options = [("0", "原始音质（不转码）"), ("128", "128 kbps"), ("192", "192 kbps"), ("256", "256 kbps"), ("320", "320 kbps")]
+            let bitrate = store.nav?.playbackSettings().bitrate ?? "0"
+            PlayerChoice(title: cellular ? "音质 · 移动网络" : "音质 · Wi-Fi", rows: options.map { $0.1 }, selected: options.first { $0.0 == bitrate }?.1 ?? options[0].1) { value in
+                guard player.current?.id == item.id, store.nav?.identity == item.raw.string("_account"), let option = options.first(where: { $0.1 == value }) else { return }
+                UserDefaults.standard.set(option.0, forKey: key)
+                player.reloadQuality()
+            }
+        } else {
+            PlayerChoice(title: "音质", rows: QualityPicker.options.map { $0.1 }, selected: QualityPicker.options.first { $0.0 == quality }?.1 ?? quality) { value in
+                guard player.current?.id == item.id, Self.canSelect(item), let option = QualityPicker.options.first(where: { $0.1 == value }) else { return }
+                quality = option.0; player.reloadQuality()
+            }
         }
     }
 }
