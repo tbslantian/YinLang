@@ -83,7 +83,7 @@ final class PlayerArtworkCanvas: UIView {
                 self.cover.alpha = self.vinyl ? 0 : 1; self.shadow.alpha = self.vinyl ? 0 : 1
                 self.disc.alpha = self.vinyl ? 1 : 0
             }
-            if !firstAppearance && !UIAccessibility.isReduceMotionEnabled {
+            if active && !firstAppearance && !UIAccessibility.isReduceMotionEnabled {
                 UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: changes)
             } else { UIView.performWithoutAnimation(changes) }
         }

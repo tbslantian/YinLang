@@ -79,6 +79,13 @@ final class PlayerLyricsCanvas: UIView, UIScrollViewDelegate {
         if self.emptyText != emptyText { self.emptyText = emptyText; needsTextLayout = true }
         self.visibleHeight = max(0, visibleHeight)
         if changedStyle { needsTextLayout = true }
+        if becameActive && !needsTextLayout {
+            // The clock keeps advancing while artwork is shown. Restore the
+            // correct two labels before revealing lyrics, without a stale frame
+            // or waiting for the next half-second audio tick.
+            let next = currentIndex()
+            if next != highlighted { style(highlighted, active: false); highlighted = next; style(next, active: true) }
+        }
         if !active { stopMotion(); resumeFollowing?.cancel() }
         if needsTextLayout || measuredSize != bounds.size { setNeedsLayout() }
         else if active && (changedHeight || becameActive) {
