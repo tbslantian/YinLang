@@ -7,6 +7,7 @@ struct PlayerMenuView: View {
     @AppStorage("player-vinyl") private var vinyl = false
     @AppStorage("quality") private var quality = "320k"
     @State private var destination: Destination?
+    @State private var pushItem: MediaItem?
     private enum Destination: String, Identifiable {
         case mode, speed, queue, sleep, cast, style, quality, effects, settings
         var id: String { rawValue }
@@ -35,7 +36,7 @@ struct PlayerMenuView: View {
                             }.disabled(store.downloading.contains(item.id) || (book && store.hasDownload(item))).accessibilityIdentifier("player-menu-download")
                             if !book, item.source != "library" {
                                 if UserDefaults.standard.bool(forKey: "server-enabled"), !(UserDefaults.standard.string(forKey: "server-url") ?? "").isEmpty {
-                                    Button { Task { await store.push(item) }; dismiss() } label: { row("server.rack", "推送到服务端下载") }.accessibilityIdentifier("player-menu-push")
+                                    Button { pushItem = item } label: { row("server.rack", "推送到服务端下载") }.accessibilityIdentifier("player-menu-push")
                                 } else { NavigationLink { SettingsView() } label: { row("server.rack", "推送到服务端下载", "未配置") }.accessibilityIdentifier("player-menu-push") }
                             }
                         }
@@ -58,6 +59,7 @@ struct PlayerMenuView: View {
                 .toolbar(.hidden, for: .navigationBar)
         }.presentationDetents([.fraction(0.78), .large]).presentationCornerRadius(30).presentationDragIndicator(.visible)
             .sheet(item: $destination) { target in sheet(target).environmentObject(store).environmentObject(player) }
+            .sheet(item: $pushItem) { item in ServerPushView(item: item).environmentObject(store) }
     }
     private var header: some View {
         HStack(spacing: 12) {

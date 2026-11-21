@@ -212,6 +212,7 @@ struct LibraryDiscoveryView: View {
     @State private var sections: [String: [MediaItem]] = [:]
     @State private var failures: [String: String] = [:]
     @State private var loading: Set<String> = []
+    @State private var openedAlbum: MediaItem?
     @AppStorage("discover-kind") private var discover = "songs"
     private var kinds: [String] { discover == "albums" ? ["random", "frequent", "songs", "newest"] : ["songs", "frequent", "random", "newest"] }
     private func title(_ key: String) -> String { ["songs": "随心听", "frequent": "常听专辑", "random": "随机推荐", "newest": "最近添加"][key] ?? key }
@@ -236,17 +237,19 @@ struct LibraryDiscoveryView: View {
                                 VStack(spacing: 0) { ForEach(Array(rows.prefix(4).enumerated()), id: \.offset) { index, item in DiscoverySongRow(item: item) { player.play(rows, at: index) }; if index < min(4, rows.count) - 1 { Rectangle().fill(Palette.soft).frame(height: 0.5).padding(.leading, 54) } } }
                             }
                         } else if key == "frequent" {
-                            VStack(spacing: 0) { ForEach(Array((sections[key] ?? []).prefix(3).enumerated()), id: \.offset) { index, item in DiscoveryAlbumRow(item: item, rank: index + 1); if index < min(3, sections[key]?.count ?? 0) - 1 { Rectangle().fill(Palette.soft).frame(height: 0.5).padding(.leading, 54) } } }
+                            VStack(spacing: 0) { ForEach(Array((sections[key] ?? []).prefix(3).enumerated()), id: \.offset) { index, item in DiscoveryAlbumRow(item: item, rank: index + 1, open: { openedAlbum = item }); if index < min(3, sections[key]?.count ?? 0) - 1 { Rectangle().fill(Palette.soft).frame(height: 0.5).padding(.leading, 54) } } }
                         } else {
                             ScrollView(.horizontal, showsIndicators: false) { LazyHStack(alignment: .top, spacing: 14) {
-                                ForEach(sections[key] ?? []) { item in NavigationLink { LibraryListView(kind: "album", identifier: item.key, title: item.title) } label: { VStack(alignment: .leading, spacing: 8) { Artwork(item: item, size: 145); Text(item.title).font(.subheadline).lineLimit(1).foregroundStyle(Palette.ink); Text(item.subtitle).font(.caption).lineLimit(1).foregroundStyle(Palette.muted) }.frame(width: 145) } }
+                                ForEach(sections[key] ?? []) { item in DiscoveryAlbumCard(item: item, open: { openedAlbum = item }) }
                             } }
                             if sections[key]?.isEmpty == true { Text(key == "frequent" ? "还没有常听记录，多听几张专辑再回来看看。" : "音乐库里暂时没有内容。").font(.caption).foregroundStyle(Palette.muted) }
                         }
                     }
                 }
             }.padding(16).frame(maxWidth: .infinity)
-        }.background { AndroidBackground() }.androidPage("发现", category: "音乐库").buttonStyle(.plain).task { for key in kinds where sections[key] == nil { await load(key) } }.refreshable { for key in kinds { await load(key) } }
+        }.background { AndroidBackground() }.androidPage("发现", category: "音乐库").buttonStyle(.plain)
+            .navigationDestination(item: $openedAlbum) { item in LibraryListView(kind: "album", identifier: item.key, title: item.title) }
+            .task { for key in kinds where sections[key] == nil { await load(key) } }.refreshable { for key in kinds { await load(key) } }
     }
     private func load(_ key: String) async {
         guard let nav = store.nav, !loading.contains(key) else { return }; loading.insert(key); failures[key] = nil; defer { loading.remove(key) }
@@ -254,8 +257,9 @@ struct LibraryDiscoveryView: View {
             let rows: [JSONObject]
             if key == "songs" { rows = try await nav.get("getRandomSongs", [.init(name: "size", value: "12")]).object("randomSongs").rows("song") }
             else { rows = try await nav.get("getAlbumList2", [.init(name: "type", value: key == "songs" ? "random" : key), .init(name: "size", value: "12")]).object("albumList2").rows("album") }
+            guard !Task.isCancelled, store.nav?.identity == nav.identity else { return }
             sections[key] = rows.map { store.libraryItem($0, kind: key == "songs" ? "song" : "album") }
-        } catch { failures[key] = error.localizedDescription }
+        } catch { if !Task.isCancelled, store.nav?.identity == nav.identity { failures[key] = error.localizedDescription } }
     }
 }
 
@@ -266,19 +270,29 @@ private struct DiscoverySongRow: View {
     @State private var actions = false
     var body: some View {
         HStack(spacing: 0) {
-            Button(action: play) { HStack(spacing: 10) { Artwork(item: item); VStack(alignment: .leading, spacing: 5) { Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1); HStack(spacing: 5) { let format = item.raw.string("suffix").uppercased(); if !format.isEmpty { Text(format + (item.raw.string("bitRate").isEmpty ? "" : " " + item.raw.string("bitRate") + "K")).font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.accent).padding(.horizontal, 6).padding(.vertical, 3).background(Palette.tint, in: RoundedRectangle(cornerRadius: 7)) }; Text(item.subtitle).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(1) } }.frame(maxWidth: .infinity, alignment: .leading) } }.buttonStyle(.plain)
-            Text(clockText(item.duration)).font(.system(size: 11)).foregroundStyle(Palette.muted).frame(width: 34, alignment: .trailing)
+            Button(action: play) {
+                HStack(spacing: 10) {
+                    Artwork(item: item)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1)
+                        HStack(spacing: 5) {
+                            let format = item.raw.string("suffix").uppercased()
+                            if !format.isEmpty { Text(format + (item.raw.string("bitRate").isEmpty ? "" : " " + item.raw.string("bitRate") + "K")).font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.accent).padding(.horizontal, 6).padding(.vertical, 3).background(Palette.tint, in: RoundedRectangle(cornerRadius: 7)) }
+                            Text(item.subtitle).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(1)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    Text(clockText(item.duration)).font(.system(size: 11)).foregroundStyle(Palette.muted).frame(width: 34, alignment: .trailing)
+                }.padding(.vertical, 8).frame(maxWidth: .infinity, minHeight: 68, alignment: .leading).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityLabel("播放 " + item.title).accessibilityIdentifier("discovery-song-play-" + item.key)
             Button { store.toggleLike(item) } label: { YLIcon(systemName: store.isLiked(item) ? "heart.fill" : "heart", size: 19).foregroundStyle(Palette.accent).frame(width: 44, height: 44) }.accessibilityLabel("服务器收藏")
             Button { actions = true } label: { YLIcon(systemName: "ellipsis", size: 19).foregroundStyle(Palette.accent).frame(width: 44, height: 44) }.accessibilityLabel("歌曲操作")
-        }.padding(.vertical, 8).frame(minHeight: 68).buttonStyle(.plain).sheet(isPresented: $actions) { SongActionsView(item: item) }
+        }.frame(minHeight: 68).buttonStyle(.plain).sheet(isPresented: $actions) { SongActionsView(item: item).environmentObject(store) }
     }
 }
 private struct DiscoveryAlbumRow: View {
-    @EnvironmentObject var store: AppStore
-    @EnvironmentObject var player: Player
     var item: MediaItem
     var rank: Int
-    @State private var loading = false
+    var open: () -> Void
     private var detail: String {
         var result = item.subtitle
         let count = item.raw.string("songCount"), plays = item.raw.string("playCount")
@@ -294,14 +308,56 @@ private struct DiscoveryAlbumRow: View {
     }
     var body: some View {
         HStack(spacing: 0) {
-            NavigationLink { LibraryListView(kind: "album", identifier: item.key, title: item.title) } label: { HStack(spacing: 11) { Artwork(item: item, size: 50); labels } }
-            Button { Task { await playAlbum() } } label: { YLIcon(systemName: "play.fill", size: 18).foregroundStyle(Palette.accent).frame(width: 44, height: 44) }.disabled(loading).accessibilityLabel("播放专辑 " + item.title)
-        }.padding(.vertical, 9).buttonStyle(.plain)
+            Button(action: open) { HStack(spacing: 11) { Artwork(item: item, size: 50); labels }.frame(maxWidth: .infinity, minHeight: 68, alignment: .leading).contentShape(Rectangle()) }
+                .accessibilityLabel("打开专辑 " + item.title).accessibilityIdentifier("discovery-album-open-" + item.key)
+            DiscoveryAlbumPlayButton(item: item)
+        }.buttonStyle(.plain)
+    }
+}
+
+private struct DiscoveryAlbumCard: View {
+    let item: MediaItem
+    var open: () -> Void
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button(action: open) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Artwork(item: item, size: 145)
+                    Text(item.title).font(.subheadline).lineLimit(1).foregroundStyle(Palette.ink)
+                    Text(item.subtitle).font(.caption).lineLimit(1).foregroundStyle(Palette.muted)
+                }.frame(width: 145, alignment: .leading).padding(.bottom, 5).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityLabel("打开专辑 " + item.title).accessibilityIdentifier("discovery-album-open-" + item.key)
+            DiscoveryAlbumPlayButton(item: item).background(Palette.paper.opacity(0.95), in: Circle()).padding(6).offset(y: 89)
+        }.frame(width: 145)
+    }
+}
+
+private struct DiscoveryAlbumPlayButton: View {
+    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var player: Player
+    let item: MediaItem
+    @State private var task: Task<Void, Never>?
+    @State private var loading = false
+    var body: some View {
+        Button {
+            guard !loading else { return }; loading = true
+            task = Task { await playAlbum() }
+        } label: {
+            Group { if loading { ProgressView() } else { YLIcon(systemName: "play.fill", size: 18) } }
+                .foregroundStyle(Palette.accent).frame(width: 44, height: 44).contentShape(Circle())
+        }.buttonStyle(.plain).disabled(loading).accessibilityLabel("播放专辑 " + item.title).accessibilityIdentifier("discovery-album-play-" + item.key)
+            .onDisappear { task?.cancel(); task = nil; loading = false }
     }
     private func playAlbum() async {
-        guard let nav = store.nav else { return }; loading = true; defer { loading = false }
-        do { let result = try await nav.get("getAlbum", [.init(name: "id", value: item.key)]); let songs = result.object("album").rows("song"); player.play(songs.map { store.libraryItem($0) }) }
-        catch { store.message = error.localizedDescription }
+        defer { loading = false }
+        guard let nav = store.nav, item.raw.string("_account") == nav.identity else { store.message = "音乐库账号已变更，请刷新发现页"; return }
+        do {
+            let result = try await nav.get("getAlbum", [.init(name: "id", value: item.key)])
+            guard !Task.isCancelled, store.nav?.identity == nav.identity else { return }
+            let songs = result.object("album").rows("song")
+            guard !songs.isEmpty else { store.message = "此专辑暂无歌曲"; return }
+            player.play(songs.map { store.libraryItem($0) })
+        } catch { if !Task.isCancelled, store.nav?.identity == nav.identity { store.message = error.localizedDescription } }
     }
 }
 

@@ -218,7 +218,7 @@ final class AppStore: ObservableObject {
         let limit = defaults.object(forKey: item.kind == "episode" ? "book-cache" : "music-cache") as? Int ?? 512
         return await MediaCache.shared.store(cacheKey(item, quality: actualQuality), url: url, headers: headers, books: item.kind == "episode", limitMB: limit)
     }
-    func resolve(_ item: MediaItem, fallback: Bool = true, useLocal: Bool = true, quality requestedQuality: String? = nil, progress: ((ResolutionNotice) -> Void)? = nil) async throws -> (URL, [String: String], String) {
+    func resolve(_ item: MediaItem, fallback: Bool = true, useLocal: Bool = true, quality requestedQuality: String? = nil, downloadOnly: Bool = false, resolvedSize: ((Int64?) -> Void)? = nil, progress: ((ResolutionNotice) -> Void)? = nil) async throws -> (URL, [String: String], String) {
         try Task.checkCancellation()
         if item.source == "library", item.raw.string("_account") != nav?.identity { throw AppFailure.message("音乐库账号已变更，请从当前音乐库选择歌曲") }
         if useLocal, let download = downloads.first(where: { $0.item.id == item.id }), FileManager.default.fileExists(atPath: Disk.documents.appendingPathComponent(download.filename).path) { return (Disk.documents.appendingPathComponent(download.filename), [:], "本机下载") }
@@ -288,7 +288,9 @@ final class AppStore: ObservableObject {
                             guard let url = URL(string: result.string("url")), ["http", "https"].contains(url.scheme ?? "") else { throw AppFailure.message("音源没有返回有效音频地址") }
                             let headers = result["headers"] as? [String: String] ?? [:]
                             progress?(ResolutionNotice(phase: .validating, detail: attempt))
-                            try await AudioProbe(quality: quality).verify(url, headers: headers); try Task.checkCancellation()
+                            let probe = AudioProbe(quality: quality, downloadOnly: downloadOnly)
+                            try await probe.verify(url, headers: headers); try Task.checkCancellation()
+                            resolvedSize?(probe.totalBytes)
                             progress?(ResolutionNotice(phase: .success, detail: attempt))
                             return (url, headers, attempt)
                         } catch {
@@ -401,12 +403,40 @@ final class AppStore: ObservableObject {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw AppFailure.message("下载服务器请求失败") }
         return (try JSONSerialization.jsonObject(with: data)) as? JSONObject ?? [:]
     }
-    func push(_ item: MediaItem) async {
-        do {
-            let (url, headers, _) = try await resolve(item, fallback: false, useLocal: false)
-            guard !url.isFileURL else { throw AppFailure.message("当前文件只有本机地址，请从在线列表选择歌曲") }
-            _ = try await server("/v1/jobs", method: "POST", body: ["kind": "music", "url": url.absoluteString, "headers": headers, "title": item.title, "artist": item.subtitle, "quality": defaults.string(forKey: "quality") ?? "320k", "album": item.raw.string("albumName", "album")])
-            message = "已推送到服务器"
-        } catch { message = error.localizedDescription }
+    func pushQualities(_ item: MediaItem) async throws -> [String] {
+        guard item.kind == "song", Platform(rawValue: item.source) != nil, item.source != "all" else { throw AppFailure.message("请从在线音乐列表选择歌曲") }
+        guard let url = URL(string: defaults.string(forKey: "server-url") ?? ""), ["http", "https"].contains(url.scheme ?? ""), url.host != nil else { throw AppFailure.message("请先配置下载服务器") }
+        let sources = plugins.filter { !$0.books && $0.enabled }
+        guard !sources.isEmpty else { throw AppFailure.message("请在音乐设置导入 LX JavaScript 音源") }
+        var supported: Set<String> = []
+        var lastError = "没有音源支持此音乐平台"
+        for plugin in sources {
+            do {
+                try Task.checkCancellation()
+                let runtime = try await runtime(plugin.id, scripts: plugin.runtimeScript)
+                let platforms = try await runtime.call("lxPlatforms()", timeout: 20) as? JSONObject ?? [:]
+                guard let advertised = platforms[item.source] as? JSONObject else { continue }
+                let qualities = advertised["qualitys"] as? [String] ?? []
+                supported.formUnion(qualities.isEmpty ? ServerPushOption.platformQualities(item.source) : qualities)
+            } catch { try Task.checkCancellation(); lastError = error.localizedDescription }
+        }
+        let ordered = ServerPushOption.qualities.filter { supported.contains($0) }
+        guard !ordered.isEmpty else { throw AppFailure.message(lastError) }
+        return ordered
+    }
+    func preparePush(_ item: MediaItem, quality: String) async throws -> ServerPushOption {
+        var bytes: Int64?
+        let (url, headers, _) = try await resolve(item, fallback: false, useLocal: false, quality: quality, downloadOnly: true, resolvedSize: { bytes = $0 })
+        guard !url.isFileURL, !url.pathExtension.lowercased().contains("m3u8") else { throw AppFailure.message("此音质未返回可下载的音频文件") }
+        return ServerPushOption(quality: quality, url: url, headers: headers, bytes: bytes)
+    }
+    func push(_ item: MediaItem, option: ServerPushOption) async throws {
+        try Task.checkCancellation()
+        // A verified selection must never silently use the playback preference,
+        // fall back to another quality, or be replaced by a local cache file.
+        let ready: ServerPushOption
+        if Date().timeIntervalSince(option.preparedAt) < 120 { ready = option }
+        else { ready = try await preparePush(item, quality: option.quality) }
+        _ = try await server("/v1/jobs", method: "POST", body: ["kind": "music", "url": ready.url.absoluteString, "headers": ready.headers, "title": item.title, "artist": item.subtitle, "quality": ready.quality, "album": item.raw.string("albumName", "album"), "source": item.source, "songId": item.key])
     }
 }

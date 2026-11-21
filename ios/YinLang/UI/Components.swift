@@ -95,6 +95,7 @@ struct SongActionsView: View {
     @Environment(\.dismiss) private var dismiss
     var item: MediaItem
     var remove: (() -> Void)? = nil
+    @State private var push = false
     var body: some View {
         NavigationStack {
             AndroidForm {
@@ -106,7 +107,7 @@ struct SongActionsView: View {
                 }
                 if item.kind == "song" {
                     Button { Task { await store.download(item) }; dismiss() } label: { AndroidRow(title: "下载到本机", icon: "arrow.down.circle") }.buttonStyle(.plain)
-                    if item.source != "library" { Button { Task { await store.push(item) }; dismiss() } label: { AndroidRow(title: "推送到服务器", icon: "server.rack") }.buttonStyle(.plain) }
+                    if item.source != "library" { Button { push = true } label: { AndroidRow(title: "推送到服务器", icon: "server.rack") }.buttonStyle(.plain) }
                     if item.source == "library" {
                         NavigationLink { AddToPlaylistView(item: item) } label: { AndroidRow(title: "加入歌单", icon: "music.note.list") }.buttonStyle(.plain)
                         NavigationLink { SongDetailsView(item: item) } label: { AndroidRow(title: "查看歌曲详情", icon: "info.circle") }.buttonStyle(.plain)
@@ -118,6 +119,7 @@ struct SongActionsView: View {
                 if let remove { Button("移出列表", role: .destructive) { remove(); dismiss() } }
             }.androidPage("歌曲操作")
         }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible).presentationCornerRadius(30)
+            .sheet(isPresented: $push) { ServerPushView(item: item).environmentObject(store) }
     }
 }
 struct ErrorPanel: View {
