@@ -67,12 +67,14 @@ struct PlayerView: View {
     @EnvironmentObject var player: Player
     @EnvironmentObject var store: AppStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("player-dark") private var dark = true
     @AppStorage("player-vinyl") private var vinyl = false
     @AppStorage("player-keep-screen-on") private var keepScreenOn = false
     @State private var lyrics = false
     @State private var fullLyrics = false
     @State private var landscapeControlsHidden = false
+    @State private var landscapeFooterHeight: CGFloat = 0
     @State private var menu = false
     @State private var sleep = false
     @State private var cast = false
@@ -87,6 +89,7 @@ struct PlayerView: View {
     private var muted: Color { Color(rgb: dark ? 0xece4ef : 0x624f55) }
     private var accent: Color { Color(rgb: dark ? 0xffcedd : 0x9a3e54) }
     private var activeLine: LyricLine? { player.lyrics.last { $0.time <= player.elapsed } }
+    private var controlsAnimation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.22) }
     var body: some View {
         GeometryReader { proxy in
             let compact = proxy.size.height < 560
@@ -95,7 +98,15 @@ struct PlayerView: View {
                 Color(rgb: dark ? 0x211820 : 0xf0e6e1).ignoresSafeArea()
                 PlayerBackdrop(url: player.current.flatMap(store.artwork), size: proxy.size, dark: dark).equatable().ignoresSafeArea().allowsHitTesting(false)
                 VStack(spacing: 0) {
-                    if landscape ? !landscapeControlsHidden : !fullLyrics { Button { dismiss() } label: { Capsule().fill(muted.opacity(0.5)).frame(width: 42, height: 4).frame(width: 64, height: landscape && compact ? 28 : 48) }.accessibilityLabel("收起播放器") }
+                    if landscape || !fullLyrics {
+                        Button { dismiss() } label: { Capsule().fill(muted.opacity(0.5)).frame(width: 42, height: 4).frame(width: 64, height: landscape && compact ? 28 : 48) }
+                            .accessibilityLabel("收起播放器")
+                            .opacity(landscape && landscapeControlsHidden ? 0 : 1)
+                            .offset(y: landscape && landscapeControlsHidden ? -8 : 0)
+                            .animation(controlsAnimation, value: landscapeControlsHidden)
+                            .allowsHitTesting(!landscape || !landscapeControlsHidden)
+                            .accessibilityHidden(landscape && landscapeControlsHidden)
+                    }
                     if landscape {
                         HStack(spacing: compact ? 16 : 28) {
                             artworkStage(maximumEdge: 520)
@@ -103,18 +114,39 @@ struct PlayerView: View {
                                 .contentShape(Rectangle())
                                 .accessibilityElement(children: .ignore).accessibilityLabel("播放器封面")
                                 .accessibilityIdentifier("player-landscape-artwork")
-                            VStack(spacing: 0) {
-                                lyricStage(expandable: false, compact: compact, togglesLandscapeControls: true)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                    .accessibilityElement(children: .contain)
-                                    .accessibilityHint(landscapeControlsHidden ? "点击显示控制栏" : "点击隐藏控制栏")
-                                    .accessibilityIdentifier("player-landscape-lyrics")
-                                if !landscapeControlsHidden {
+                            GeometryReader { panel in
+                                // Keep both the scroll canvas and native controls alive.
+                                // Reveal lyrics with a mask instead of laying out the page again.
+                                ZStack(alignment: .bottom) {
+                                    LandscapePlayerLyrics(lines: player.lyrics, activeID: activeLine?.id,
+                                        fallbackText: player.lyricText.isEmpty ? (player.current?.kind == "episode" ? "有声书暂无歌词" : "暂无歌词") : player.lyricText,
+                                        compact: compact, ink: ink, controlsHidden: landscapeControlsHidden,
+                                        controlsHeight: landscapeFooterHeight, ready: landscapeFooterHeight > 0) {
+                                            landscapeControlsHidden.toggle()
+                                        }
+                                        .frame(width: panel.size.width, height: panel.size.height)
+                                        .accessibilityElement(children: .contain)
+                                        .accessibilityHint(landscapeControlsHidden ? "点击显示控制栏" : "点击隐藏控制栏")
+                                        .accessibilityIdentifier("player-landscape-lyrics")
                                     footer(compact: compact, landscape: true).padding(.top, compact ? 2 : 10)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .background {
+                                            GeometryReader { controls in
+                                                Color.clear.preference(key: LandscapeFooterHeightKey.self, value: controls.size.height)
+                                            }
+                                        }
+                                        .opacity(landscapeControlsHidden ? 0 : 1)
+                                        .offset(y: landscapeControlsHidden ? 10 : 0)
+                                        .animation(controlsAnimation, value: landscapeControlsHidden)
+                                        .allowsHitTesting(!landscapeControlsHidden)
+                                        .accessibilityHidden(landscapeControlsHidden)
                                         .accessibilityElement(children: .contain)
                                         .accessibilityIdentifier("player-landscape-controls")
-                                }
-                            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                                }.frame(width: panel.size.width, height: panel.size.height)
+                            }
+                            .onPreferenceChange(LandscapeFooterHeightKey.self) { height in
+                                if height > 0, abs(height - landscapeFooterHeight) > 0.5 { landscapeFooterHeight = height }
+                            }
                         }.padding(.horizontal, compact ? 16 : 26).padding(.bottom, compact ? 4 : 12)
                     } else {
                         stage.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.horizontal, 20)
@@ -132,7 +164,8 @@ struct PlayerView: View {
                     }
                 }.foregroundStyle(ink)
             }
-            .statusBarHidden(landscape && landscapeControlsHidden)
+            // Keep safe-area geometry stable while controls fade in and out.
+            .statusBarHidden(landscape)
             .onChange(of: landscape) { _, _ in landscapeControlsHidden = false }
         }
             .preferredColorScheme(dark ? .dark : .light)
@@ -150,38 +183,29 @@ struct PlayerView: View {
         if lyrics { lyricStage() }
         else { artworkStage() }
     }
-    private func lyricStage(expandable: Bool = true, compact: Bool = false, togglesLandscapeControls: Bool = false) -> some View {
-        ScrollViewReader { reader in
+    private func lyricStage(expandable: Bool = true, compact: Bool = false) -> some View {
+        let activeID = activeLine?.id
+        return ScrollViewReader { reader in
                 ScrollView {
                     VStack(spacing: compact ? 16 : 24) {
                         if player.lyrics.isEmpty { Text(player.lyricText.isEmpty ? (player.current?.kind == "episode" ? "有声书暂无歌词" : "暂无歌词") : player.lyricText).font(.system(size: compact ? 16 : 20)).lineSpacing(compact ? 8 : 14).frame(maxWidth: .infinity).padding(.vertical, compact ? 12 : 60) }
                         ForEach(player.lyrics) { line in
-                            Group {
-                                if togglesLandscapeControls {
-                                    lyricLine(line, compact: compact)
-                                } else {
-                                    Button { player.seek(line.time) } label: { lyricLine(line, compact: compact) }.buttonStyle(.plain)
-                                }
-                            }.id(line.id)
+                            Button { player.seek(line.time) } label: { lyricLine(line, active: activeID == line.id, compact: compact) }.buttonStyle(.plain).id(line.id)
                         }
                     }.padding(.vertical, compact ? 12 : 50).padding(.horizontal, compact ? 8 : 24).contentShape(Rectangle())
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
-                .onChange(of: activeLine?.id, initial: true) { _, id in if let id { withAnimation { reader.scrollTo(id, anchor: .center) } } }
+                .onChange(of: activeID, initial: true) { _, id in if let id { withAnimation { reader.scrollTo(id, anchor: .center) } } }
                 .onTapGesture {
-                    if togglesLandscapeControls {
-                        withAnimation(.easeInOut(duration: 0.2)) { landscapeControlsHidden.toggle() }
-                    } else if expandable {
-                        withAnimation { fullLyrics.toggle() }
-                    }
+                    if expandable { withAnimation { fullLyrics.toggle() } }
                 }
             }
     }
-    private func lyricLine(_ line: LyricLine, compact: Bool) -> some View {
+    private func lyricLine(_ line: LyricLine, active: Bool, compact: Bool) -> some View {
         Text(line.text.isEmpty ? "♪" : line.text)
-            .font(.system(size: activeLine?.id == line.id ? (compact ? 19 : 25) : (compact ? 16 : 21), weight: activeLine?.id == line.id ? .bold : .medium))
-            .foregroundStyle(ink.opacity(activeLine?.id == line.id ? 1 : 0.35))
+            .font(.system(size: active ? (compact ? 19 : 25) : (compact ? 16 : 21), weight: active ? .bold : .medium))
+            .foregroundStyle(ink.opacity(active ? 1 : 0.35))
             .multilineTextAlignment(.center).frame(maxWidth: .infinity)
     }
     private func artworkStage(maximumEdge: CGFloat = 350) -> some View {
@@ -264,6 +288,103 @@ struct PlayerView: View {
     }
     private func tool(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View { Button(action: action) { YLIcon(systemName: icon, size: 22).frame(maxWidth: .infinity).frame(height: 44) }.accessibilityLabel(label) }
 }
+private struct LandscapeFooterHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+// Only the reveal mask changes height; the lyric scroll view keeps one viewport
+// and one content layout, so hiding controls does not reflow every lyric line.
+private struct LandscapePlayerLyrics: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let lines: [LyricLine]
+    let activeID: String?
+    let fallbackText: String
+    let compact: Bool
+    let ink: Color
+    let controlsHidden: Bool
+    let controlsHeight: CGFloat
+    let ready: Bool
+    let toggleControls: () -> Void
+    private var animation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.22) }
+    var body: some View {
+        GeometryReader { proxy in
+            let height = proxy.size.height
+            let visibleHeight = controlsHidden ? height : max(0, height - controlsHeight)
+            let anchor = UnitPoint(x: 0.5, y: height > 0 ? visibleHeight / (2 * height) : 0.5)
+            let targetID = activeID ?? lines.first?.id
+            ScrollViewReader { reader in
+                ScrollView {
+                    LandscapeLyricRows(lines: lines, activeID: activeID, fallbackText: fallbackText,
+                                       compact: compact, ink: ink, canvasHeight: height).equatable()
+                }
+                .scrollIndicators(.hidden)
+                .frame(width: proxy.size.width, height: height)
+                .mask(alignment: .top) {
+                    Rectangle().frame(height: visibleHeight).animation(animation, value: controlsHidden)
+                }
+                .opacity(ready ? 1 : 0)
+                .contentShape(LandscapeLyricViewport(height: visibleHeight))
+                .onTapGesture(perform: toggleControls)
+                .onChange(of: targetID, initial: true) { previous, id in
+                    guard let id else { return }
+                    withAnimation(previous == nil ? nil : animation) { reader.scrollTo(id, anchor: anchor) }
+                }
+                .onChange(of: controlsHidden) { _, _ in
+                    guard let targetID else { return }
+                    withAnimation(animation) { reader.scrollTo(targetID, anchor: anchor) }
+                }
+                .onChange(of: controlsHeight) { _, _ in
+                    guard let targetID else { return }
+                    withAnimation(nil) { reader.scrollTo(targetID, anchor: anchor) }
+                }
+                .onChange(of: proxy.size) { _, _ in
+                    guard let targetID else { return }
+                    withAnimation(nil) { reader.scrollTo(targetID, anchor: anchor) }
+                }
+            }
+        }
+    }
+}
+
+private struct LandscapeLyricViewport: Shape {
+    let height: CGFloat
+    func path(in rect: CGRect) -> Path {
+        Path(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: min(rect.height, max(0, height))))
+    }
+}
+
+// Player publishes progress twice per second. Rebuild the lyric rows only when
+// the highlighted line, lyrics, appearance, or actual window size changes.
+private struct LandscapeLyricRows: View, Equatable {
+    let lines: [LyricLine]
+    let activeID: String?
+    let fallbackText: String
+    let compact: Bool
+    let ink: Color
+    let canvasHeight: CGFloat
+    var body: some View {
+        VStack(spacing: compact ? 16 : 24) {
+            if lines.isEmpty {
+                Text(fallbackText).font(.system(size: compact ? 16 : 20)).lineSpacing(compact ? 8 : 14)
+                    .frame(maxWidth: .infinity).padding(.vertical, compact ? 12 : 60)
+            }
+            ForEach(lines) { line in
+                let active = activeID == line.id
+                Text(line.text.isEmpty ? "♪" : line.text)
+                    .font(.system(size: active ? (compact ? 19 : 25) : (compact ? 16 : 21), weight: active ? .bold : .medium))
+                    .foregroundStyle(ink.opacity(active ? 1 : 0.35))
+                    .multilineTextAlignment(.center).frame(maxWidth: .infinity).id(line.id)
+            }
+        }
+        .padding(.top, lines.isEmpty ? (compact ? 12 : 50) : canvasHeight / 2)
+        // The full-height canvas also needs space to center the last line in
+        // the smaller visible region above the controls.
+        .padding(.bottom, lines.isEmpty ? (compact ? 12 : 50) : canvasHeight)
+        .padding(.horizontal, compact ? 8 : 24)
+    }
+}
+
 struct PlayerBackdrop: View, Equatable {
     let url: URL?
     let size: CGSize
