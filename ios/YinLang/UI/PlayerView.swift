@@ -402,14 +402,15 @@ private struct QueueSwipeRow: View {
     @State private var horizontal: Bool?
     @State private var suppressPlayUntil = Date.distantPast
     private let actionWidth: CGFloat = 88
+    private var highlighted: Bool { SongPlaybackHighlight.matches(item, player: player, queuePosition: position) }
     var body: some View {
         HStack(spacing: 8) {
-            SongRow(item: item, rank: position + 1, remove: remove) {
+            SongRow(item: item, rank: position + 1, queuePosition: position, remove: remove) {
                 guard offset == 0, horizontal != true, Date() >= suppressPlayUntil else { return }
                 player.play(player.queue, at: position)
             }
             if position == player.index { Image(systemName: "waveform").foregroundStyle(Palette.accent).padding(.trailing, 8).accessibilityLabel("正在播放").accessibilityIdentifier("queue-current-" + item.id) }
-        }.androidSurface().offset(x: offset)
+        }.songPlaybackSurface(highlighted: highlighted, marker: false).offset(x: offset)
             .background(alignment: .trailing) {
                 Button(action: remove) {
                     VStack(spacing: 5) { YLIcon(systemName: "trash", size: 20); Text("移除").font(.system(size: 13, weight: .semibold)) }

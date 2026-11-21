@@ -48,11 +48,50 @@ struct MediaRow: View {
     var item: MediaItem
     var body: some View { HStack(spacing: 12) { Artwork(item: item); VStack(alignment: .leading, spacing: 5) { Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(2); if !item.subtitle.isEmpty { Text(item.subtitle).font(.system(size: 13)).foregroundStyle(Palette.muted).lineLimit(2) } }.frame(maxWidth: .infinity, alignment: .leading); YLIcon(systemName: "chevron.right", size: 15).foregroundStyle(Palette.muted) }.padding(11).frame(maxWidth: .infinity, alignment: .leading).androidSurface().contentShape(Rectangle()) }
 }
+enum SongPlaybackHighlight {
+    @MainActor static func matches(_ item: MediaItem, player: Player, queuePosition: Int? = nil) -> Bool {
+        guard !item.key.isEmpty, player.current?.id == item.id else { return false }
+        if let queuePosition { return queuePosition == player.index }
+        return item.kind == "song" && !player.playbackFailed
+    }
+}
+
+private struct SongPlaybackSurface: ViewModifier {
+    let highlighted: Bool
+    let marker: Bool
+    let normalSurface: Bool
+    func body(content: Content) -> some View {
+        content
+            .background(highlighted ? Palette.tint : normalSurface ? Palette.paper : Color.clear, in: RoundedRectangle(cornerRadius: 16))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16).stroke(normalSurface && !highlighted ? Palette.ink.opacity(0.04) : Color.clear, lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .leading) {
+                if highlighted && marker {
+                    GeometryReader { proxy in
+                        let inset = min(14, proxy.size.height * 0.2)
+                        RoundedRectangle(cornerRadius: 1.5).fill(Palette.accent)
+                            .frame(width: 3, height: max(0, proxy.size.height - inset * 2))
+                            .position(x: 5.5, y: proxy.size.height / 2)
+                    }.allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }
+    }
+}
+
+extension View {
+    func songPlaybackSurface(highlighted: Bool, marker: Bool = true, normalSurface: Bool = true) -> some View {
+        modifier(SongPlaybackSurface(highlighted: highlighted, marker: marker, normalSurface: normalSurface))
+    }
+}
+
 struct SongRow: View {
     @EnvironmentObject var store: AppStore
     @EnvironmentObject var player: Player
     let item: MediaItem
     var rank: Int? = nil
+    var queuePosition: Int? = nil
     var remove: (() -> Void)? = nil
     var play: () -> Void
     @State private var actions = false
@@ -71,6 +110,8 @@ struct SongRow: View {
         return value
     }
     private var currentPlayback: Bool { item.kind == "song" && player.current?.id == item.id }
+    private var highlighted: Bool { SongPlaybackHighlight.matches(item, player: player, queuePosition: queuePosition) }
+    private var titleHighlighted: Bool { item.kind == "song" || queuePosition != nil ? highlighted : player.current?.id == item.id }
     private var playbackLabel: String {
         if currentPlayback && player.loading { return "正在载入 " + item.title }
         return (currentPlayback && player.playing ? "暂停 " : "播放 ") + item.title
@@ -82,7 +123,7 @@ struct SongRow: View {
                 HStack(spacing: 10) {
                     if !item.cover.isEmpty { Artwork(item: item, size: 44) }
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(player.current?.id == item.id ? Palette.accent : Palette.ink).lineLimit(1)
+                        Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(titleHighlighted ? Palette.accent : Palette.ink).lineLimit(1)
                         Text(detail).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(2)
                         if !quality.isEmpty { Text(quality).font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.accent).padding(.horizontal, 6).padding(.vertical, 3).background(Palette.tint, in: RoundedRectangle(cornerRadius: 7)) }
                     }.padding(.vertical, 3).frame(maxWidth: .infinity, alignment: .leading)
@@ -105,7 +146,9 @@ struct SongRow: View {
                     .accessibilityLabel(playbackLabel).accessibilityIdentifier("song-playback-" + item.id)
             }
             Button { actions = true } label: { if store.downloading.contains(item.id) { ProgressView().frame(width: 44) } else { YLIcon(systemName: "ellipsis", size: 19).frame(width: 44, height: 48).foregroundStyle(Palette.accent) } }.buttonStyle(.plain).accessibilityLabel("歌曲操作")
-        }.padding(.horizontal, 10).padding(.vertical, 11).androidSurface()
+        }.padding(.horizontal, 10).padding(.vertical, 11)
+            .songPlaybackSurface(highlighted: highlighted, marker: queuePosition == nil)
+            .accessibilityAddTraits(highlighted ? .isSelected : [])
             .sheet(isPresented: $actions) { SongActionsView(item: item, remove: remove).environmentObject(store).environmentObject(player) }
     }
 }

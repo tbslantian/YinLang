@@ -9,6 +9,8 @@ final class Player: ObservableObject {
     @Published var index = 0
     @Published var playing = false
     @Published var loading = false
+    // Visual current-song highlighting follows Android's failed-playback rule.
+    @Published private(set) var playbackFailed = false
     // Timing changes have their own publisher. Lists and the screen shell
     // observe playback state without being invalidated by the half-second clock.
     let progress = PlayerProgressClock()
@@ -145,6 +147,7 @@ final class Player: ObservableObject {
         if let failureObserver { NotificationCenter.default.removeObserver(failureObserver); self.failureObserver = nil }
         audio.pause(); audio.replaceCurrentItem(with: nil)
         generation = UUID(); let token = generation
+        playbackFailed = false
         loading = true; playing = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = current.source == "library" ? "正在载入音乐库音频…" : prepared == nil ? "正在解析音频…" : "正在载入已准备的音频…"
         externalMetadata = ExternalPlaybackMetadata()
         if prepared == nil { publishResolution(ResolutionNotice(phase: .resolving, detail: current.title)) }
@@ -238,7 +241,7 @@ final class Player: ObservableObject {
                     externalMetadata.setLyrics(text, lines: lyrics); updateExternalMetadata()
                 }
             } catch {
-                guard generation == token, !Task.isCancelled else { return }; loading = false; status = error.localizedDescription; store.message = status
+                guard generation == token, !Task.isCancelled else { return }; playbackFailed = true; loading = false; status = error.localizedDescription; store.message = status
                 publishResolution(ResolutionNotice(phase: .failure, detail: status))
             }
         }
@@ -331,7 +334,7 @@ final class Player: ObservableObject {
             itemObservation = nil; audio.pause(); audio.replaceCurrentItem(with: nil)
             start(useLocal: false, resumeAt: position)
         } else {
-            loading = false; playing = false; status = item.error?.localizedDescription ?? "音频格式无法播放"; store?.message = status
+            playbackFailed = true; loading = false; playing = false; status = item.error?.localizedDescription ?? "音频格式无法播放"; store?.message = status
             publishResolution(ResolutionNotice(phase: .failure, detail: status))
         }
     }
@@ -427,11 +430,11 @@ final class Player: ObservableObject {
         }
     }
     func resume() {
-        if let receiver = dlna.current { playing = true; Task { _ = try? await dlna.soap(receiver, action: "Play", values: [("Speed", "1")]) }; return }
+        if let receiver = dlna.current { playbackFailed = false; playing = true; Task { _ = try? await dlna.soap(receiver, action: "Play", values: [("Speed", "1")]) }; return }
         guard let item = audio.currentItem else { if current != nil { start() }; return }
         if item.status == .failed { start(); return }
-        do { try activateAudioSession(); audio.playImmediately(atRate: speed); playing = true; updateNowPlaying() }
-        catch { playing = false; loading = false; status = error.localizedDescription; store?.message = status }
+        do { try activateAudioSession(); audio.playImmediately(atRate: speed); playbackFailed = false; playing = true; updateNowPlaying() }
+        catch { playbackFailed = true; playing = false; loading = false; status = error.localizedDescription; store?.message = status }
     }
     func pause() { audio.pause(); if let receiver = dlna.current { Task { _ = try? await dlna.soap(receiver, action: "Pause") } }; playing = false; saveProgress(); updateNowPlaying() }
     func seek(_ seconds: Double) {
@@ -461,7 +464,7 @@ final class Player: ObservableObject {
         load?.cancel(); artworkTask?.cancel(); audioInfoTask?.cancel(); cacheTask?.cancel(); cancelPreparation(); noticeTask?.cancel(); bookResumeTask?.cancel(); generation = UUID(); itemObservation = nil
         audioInfo = AudioStreamInfo(); resolutionNotice = nil; resolutionSucceeded = false
         if let failureObserver { NotificationCenter.default.removeObserver(failureObserver); self.failureObserver = nil }
-        audio.replaceCurrentItem(with: nil); index = 0; loading = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = "选择一首喜欢的音乐"
+        audio.replaceCurrentItem(with: nil); index = 0; playbackFailed = false; loading = false; elapsed = 0; duration = 0; buffered = 0; lyrics = []; lyricText = ""; status = "选择一首喜欢的音乐"
         externalMetadata = ExternalPlaybackMetadata()
         updateNowPlaying()
     }

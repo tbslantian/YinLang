@@ -265,16 +265,18 @@ struct LibraryDiscoveryView: View {
 
 private struct DiscoverySongRow: View {
     @EnvironmentObject var store: AppStore
+    @EnvironmentObject private var player: Player
     var item: MediaItem
     var play: () -> Void
     @State private var actions = false
+    private var highlighted: Bool { SongPlaybackHighlight.matches(item, player: player) }
     var body: some View {
         HStack(spacing: 0) {
             Button(action: play) {
                 HStack(spacing: 10) {
                     Artwork(item: item)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1)
+                        Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(highlighted ? Palette.accent : Palette.ink).lineLimit(1)
                         HStack(spacing: 5) {
                             let format = item.raw.string("suffix").uppercased()
                             if !format.isEmpty { Text(format + (item.raw.string("bitRate").isEmpty ? "" : " " + item.raw.string("bitRate") + "K")).font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.accent).padding(.horizontal, 6).padding(.vertical, 3).background(Palette.tint, in: RoundedRectangle(cornerRadius: 7)) }
@@ -286,7 +288,10 @@ private struct DiscoverySongRow: View {
             }.buttonStyle(.plain).accessibilityLabel("播放 " + item.title).accessibilityIdentifier("discovery-song-play-" + item.key)
             Button { store.toggleLike(item) } label: { YLIcon(systemName: store.isLiked(item) ? "heart.fill" : "heart", size: 19).foregroundStyle(Palette.accent).frame(width: 44, height: 44) }.accessibilityLabel("服务器收藏")
             Button { actions = true } label: { YLIcon(systemName: "ellipsis", size: 19).foregroundStyle(Palette.accent).frame(width: 44, height: 44) }.accessibilityLabel("歌曲操作")
-        }.frame(minHeight: 68).buttonStyle(.plain).sheet(isPresented: $actions) { SongActionsView(item: item).environmentObject(store) }
+        }.frame(minHeight: 68).buttonStyle(.plain)
+            .songPlaybackSurface(highlighted: highlighted, marker: false, normalSurface: false)
+            .accessibilityAddTraits(highlighted ? .isSelected : [])
+            .sheet(isPresented: $actions) { SongActionsView(item: item).environmentObject(store) }
     }
 }
 private struct DiscoveryAlbumRow: View {
