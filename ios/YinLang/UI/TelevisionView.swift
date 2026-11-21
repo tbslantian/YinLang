@@ -5,6 +5,12 @@ import UIKit
 // Audio AirPlay metadata cannot replace Apple TV's system receiver interface.
 struct TelevisionView: View {
     @EnvironmentObject private var player: Player
+    var body: some View { TelevisionContent(clock: player.progress) }
+}
+
+private struct TelevisionContent: View {
+    @ObservedObject var clock: PlayerProgressClock
+    @EnvironmentObject private var player: Player
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @AppStorage("player-dark") private var dark = true
@@ -16,7 +22,7 @@ struct TelevisionView: View {
     @State private var screenCaptured = false
     private var ink: Color { Color(rgb: dark ? 0xfffbff : 0x291e24) }
     private var accent: Color { Color(rgb: dark ? 0xffcedd : 0x9a3e54) }
-    private var activeLineID: String? { player.lyrics.last { $0.time <= player.elapsed }?.id }
+    private var activeLineID: String? { player.lyrics.last { $0.time <= clock.elapsed }?.id }
 
     var body: some View {
         GeometryReader { proxy in
@@ -121,15 +127,15 @@ struct TelevisionView: View {
         VStack(spacing: 7) {
             GeometryReader { proxy in
                 Capsule().fill(ink.opacity(0.15)).overlay(alignment: .leading) {
-                    Capsule().fill(accent).frame(width: proxy.size.width * min(1, max(0, player.duration > 0 ? player.elapsed / player.duration : 0)))
+                    Capsule().fill(accent).frame(width: proxy.size.width * min(1, max(0, clock.duration > 0 ? clock.elapsed / clock.duration : 0)))
                 }
             }.frame(height: 3)
             HStack {
-                Text(clockText(player.elapsed))
+                Text(clockText(clock.elapsed))
                 Spacer()
                 Text(player.playing ? "" : "已暂停")
                 Spacer()
-                Text(clockText(player.duration))
+                Text(clockText(clock.duration))
             }.font(.system(size: 12).monospacedDigit()).foregroundStyle(ink.opacity(0.65))
         }
     }

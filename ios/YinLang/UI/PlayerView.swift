@@ -4,10 +4,16 @@ import MediaPlayer
 import QuartzCore
 
 struct MiniPlayer: View {
+    @EnvironmentObject private var player: Player
+    var body: some View { MiniPlayerContent(clock: player.progress) }
+}
+
+private struct MiniPlayerContent: View {
+    @ObservedObject var clock: PlayerProgressClock
     @EnvironmentObject var player: Player
     @EnvironmentObject var store: AppStore
     @AppStorage("mini-lyrics") private var lyricMode = "off"
-    private var active: Int? { player.lyrics.lastIndex { $0.time <= player.elapsed } }
+    private var active: Int? { player.lyrics.lastIndex { $0.time <= clock.elapsed } }
     var body: some View {
         if let item = player.current {
             VStack(spacing: 5) {
@@ -24,7 +30,7 @@ struct MiniPlayer: View {
                                 if lyricMode == "double", player.lyrics.indices.contains(active + 1) { Text(player.lyrics[active + 1].text).font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1) }
                             } else { Text(item.subtitle).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(1) }
                             }
-                            GeometryReader { proxy in Capsule().fill(Palette.soft).overlay(alignment: .leading) { Capsule().fill(Palette.accent).frame(width: proxy.size.width * min(1, player.duration > 0 ? player.elapsed / player.duration : 0)) } }.frame(height: 3).padding(.top, 1)
+                            GeometryReader { proxy in Capsule().fill(Palette.soft).overlay(alignment: .leading) { Capsule().fill(Palette.accent).frame(width: proxy.size.width * min(1, clock.duration > 0 ? clock.elapsed / clock.duration : 0)) } }.frame(height: 3).padding(.top, 1)
                         }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityIdentifier("mini-open-player")
                     HStack(spacing: 0) {
@@ -64,220 +70,198 @@ private struct MiniPlayerCover: View {
 }
 
 struct PlayerView: View {
-    @EnvironmentObject var player: Player
-    @EnvironmentObject var store: AppStore
+    @EnvironmentObject private var player: Player
+    var body: some View { PlayerScreen(player: player).equatable() }
+}
+
+// Only presentation publishers drive this shell. Equality keeps unrelated
+// engine changes out of layout; progress has its own independent publisher.
+private struct PlayerScreen: View, Equatable {
+    let engine: Player
+    @StateObject private var state: PlayerPresentationState
+    @StateObject private var artworkSource = PlayerArtworkSource()
+    @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("player-dark") private var dark = true
     @AppStorage("player-vinyl") private var vinyl = false
     @AppStorage("player-keep-screen-on") private var keepScreenOn = false
     @State private var lyrics = false
     @State private var fullLyrics = false
     @State private var landscapeControlsHidden = false
-    @State private var landscapeFooterHeight: CGFloat = 0
+    @State private var footerHeight: CGFloat = 0
     @State private var menu = false
     @State private var sleep = false
     @State private var cast = false
     @State private var chooseMode = false
     @State private var qualityItem: MediaItem?
-    init() {
+    init(player: Player) {
+        engine = player; _state = StateObject(wrappedValue: PlayerPresentationState(player))
 #if DEBUG
         _lyrics = State(initialValue: UITestFixtures.active && UITestFixtures.screen == "lyrics")
 #endif
     }
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.engine === rhs.engine }
     private var ink: Color { Color(rgb: dark ? 0xfffbff : 0x291e24) }
     private var muted: Color { Color(rgb: dark ? 0xece4ef : 0x624f55) }
     private var accent: Color { Color(rgb: dark ? 0xffcedd : 0x9a3e54) }
-    private var activeLine: LyricLine? { player.lyrics.last { $0.time <= player.elapsed } }
     private var controlsAnimation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.22) }
     var body: some View {
         GeometryReader { proxy in
             let compact = proxy.size.height < 560
-            let landscape = proxy.size.width > proxy.size.height
-            ZStack {
+            let wide = proxy.size.width > proxy.size.height
+            let hidden = wide ? landscapeControlsHidden : fullLyrics
+            let handleHeight: CGFloat = wide && compact ? 28 : 48
+            let horizontal: CGFloat = wide ? (compact ? 16 : 26) : 20
+            let bottom: CGFloat = wide ? (compact ? 4 : 12) : (compact ? 3 : 12)
+            let height = max(0, proxy.size.height - handleHeight - bottom)
+            let artWidth = max(0, wide ? (proxy.size.width - (compact ? 48 : 80)) * 0.43 : proxy.size.width - 40)
+            let gap: CGFloat = wide ? (compact ? 16 : 28) : 0
+            let lyricX = wide ? horizontal + artWidth + gap : horizontal
+            let lyricWidth = max(0, wide ? proxy.size.width - lyricX - horizontal : proxy.size.width - horizontal * 2)
+            let artHeight = max(0, wide ? height : height - footerHeight)
+            let edge = max(0, min(wide ? 520 : 350, min(artWidth, artHeight)))
+            let artVisible = state.current != nil && (wide || !lyrics)
+            let lyricVisible = wide || lyrics
+            let url = artworkSource.url(for: state.current, store: store)
+            ZStack(alignment: .topLeading) {
                 Color(rgb: dark ? 0x211820 : 0xf0e6e1).ignoresSafeArea()
-                PlayerBackdrop(url: player.current.flatMap(store.artwork), size: proxy.size, dark: dark).equatable().ignoresSafeArea().allowsHitTesting(false)
-                VStack(spacing: 0) {
-                    if landscape || !fullLyrics {
-                        Button { dismiss() } label: { Capsule().fill(muted.opacity(0.5)).frame(width: 42, height: 4).frame(width: 64, height: landscape && compact ? 28 : 48) }
-                            .accessibilityLabel("收起播放器")
-                            .opacity(landscape && landscapeControlsHidden ? 0 : 1)
-                            .offset(y: landscape && landscapeControlsHidden ? -8 : 0)
-                            .animation(controlsAnimation, value: landscapeControlsHidden)
-                            .allowsHitTesting(!landscape || !landscapeControlsHidden)
-                            .accessibilityHidden(landscape && landscapeControlsHidden)
+                PlayerBackdrop(url: url, size: proxy.size, dark: dark).equatable().ignoresSafeArea().allowsHitTesting(false)
+                // Stable identities across full-screen, artwork/lyrics, record/
+                // cover and orientation changes. Only actual size/content
+                // changes require the native surfaces to measure again.
+                PlayerArtworkSurface(url: url, book: state.current?.kind == "episode", vinyl: vinyl,
+                                     playing: state.playing, active: artVisible && scenePhase == .active)
+                    .frame(width: edge, height: edge)
+                    .position(x: horizontal + artWidth / 2, y: handleHeight + artHeight / 2)
+                    .opacity(artVisible && footerHeight > 0 ? 1 : 0).animation(controlsAnimation, value: artVisible)
+                    .allowsHitTesting(false).accessibilityHidden(!artVisible)
+                    .accessibilityLabel("播放器封面").accessibilityIdentifier(wide ? "player-landscape-artwork" : "player-artwork-stage")
+                NativePlayerLyrics(player: engine, compact: compact, ink: UIColor(ink),
+                    visibleHeight: hidden ? height : max(0, height - footerHeight), active: lyricVisible && footerHeight > 0 && scenePhase == .active,
+                    landscape: wide, emptyText: state.current?.kind == "episode" ? "有声书暂无歌词" : "暂无歌词") {
+                        if wide { landscapeControlsHidden.toggle() } else { fullLyrics.toggle() }
                     }
-                    if landscape {
-                        HStack(spacing: compact ? 16 : 28) {
-                            artworkStage(maximumEdge: 520)
-                                .frame(width: max(0, (proxy.size.width - (compact ? 48 : 80)) * 0.43))
-                                .contentShape(Rectangle())
-                                .accessibilityElement(children: .ignore).accessibilityLabel("播放器封面")
-                                .accessibilityIdentifier("player-landscape-artwork")
-                            GeometryReader { panel in
-                                // Keep both the scroll canvas and native controls alive.
-                                // Reveal lyrics with a mask instead of laying out the page again.
-                                ZStack(alignment: .bottom) {
-                                    LandscapePlayerLyrics(lines: player.lyrics, activeID: activeLine?.id,
-                                        fallbackText: player.lyricText.isEmpty ? (player.current?.kind == "episode" ? "有声书暂无歌词" : "暂无歌词") : player.lyricText,
-                                        compact: compact, ink: ink, controlsHidden: landscapeControlsHidden,
-                                        controlsHeight: landscapeFooterHeight, ready: landscapeFooterHeight > 0) {
-                                            landscapeControlsHidden.toggle()
-                                        }
-                                        .frame(width: panel.size.width, height: panel.size.height)
-                                        .accessibilityElement(children: .contain)
-                                        .accessibilityHint(landscapeControlsHidden ? "点击显示控制栏" : "点击隐藏控制栏")
-                                        .accessibilityIdentifier("player-landscape-lyrics")
-                                    footer(compact: compact, landscape: true).padding(.top, compact ? 2 : 10)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                        .background {
-                                            GeometryReader { controls in
-                                                Color.clear.preference(key: LandscapeFooterHeightKey.self, value: controls.size.height)
-                                            }
-                                        }
-                                        .opacity(landscapeControlsHidden ? 0 : 1)
-                                        .offset(y: landscapeControlsHidden ? 10 : 0)
-                                        .animation(controlsAnimation, value: landscapeControlsHidden)
-                                        .allowsHitTesting(!landscapeControlsHidden)
-                                        .accessibilityHidden(landscapeControlsHidden)
-                                        .accessibilityElement(children: .contain)
-                                        .accessibilityIdentifier("player-landscape-controls")
-                                }.frame(width: panel.size.width, height: panel.size.height)
-                            }
-                            .onPreferenceChange(LandscapeFooterHeightKey.self) { height in
-                                if height > 0, abs(height - landscapeFooterHeight) > 0.5 { landscapeFooterHeight = height }
-                            }
-                        }.padding(.horizontal, compact ? 16 : 26).padding(.bottom, compact ? 4 : 12)
-                    } else {
-                        stage.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.horizontal, 20)
-                        .overlay(alignment: .bottom) {
-                            if fullLyrics { ResolutionNoticeView(color: accent).frame(maxWidth: 340).padding(.horizontal, 20).padding(.bottom, 12) }
-                        }
-                        .contentShape(Rectangle())
-                        .simultaneousGesture(DragGesture(minimumDistance: 20).onEnded { value in
-                            guard player.current?.kind != "episode", abs(value.translation.width) >= 42,
-                                  abs(value.translation.width) > abs(value.translation.height) * 1.25 else { return }
-                            withAnimation { lyrics = value.translation.width < 0; fullLyrics = false }
-                        }, including: .all)
-                        .accessibilityIdentifier(lyrics ? "player-lyrics-stage" : "player-artwork-stage")
-                        if !fullLyrics { footer(compact: compact).padding(.horizontal, 25).padding(.top, compact ? 3 : 10).padding(.bottom, compact ? 3 : 12) }
-                    }
-                }.foregroundStyle(ink)
-            }
-            // Keep safe-area geometry stable while controls fade in and out.
-            .statusBarHidden(landscape)
-            .onChange(of: landscape) { _, _ in landscapeControlsHidden = false }
+                    .frame(width: lyricWidth, height: height)
+                    .position(x: lyricX + lyricWidth / 2, y: handleHeight + height / 2)
+                    .opacity(lyricVisible && footerHeight > 0 ? 1 : 0)
+                    .animation(controlsAnimation, value: lyricVisible)
+                    .allowsHitTesting(lyricVisible).accessibilityHidden(!lyricVisible)
+                    .simultaneousGesture(DragGesture(minimumDistance: 20).onEnded { value in
+                        guard !wide, state.current?.kind != "episode", abs(value.translation.width) >= 42,
+                              abs(value.translation.width) > abs(value.translation.height) * 1.25 else { return }
+                        lyrics = value.translation.width < 0; fullLyrics = false
+                    })
+                    .accessibilityIdentifier(wide ? "player-landscape-lyrics" : "player-lyrics-stage")
+                // A gesture surface is kept separate from the native artwork.
+                // In portrait lyrics mode the native scroll view handles taps.
+                Color.clear.frame(width: wide ? artWidth : lyricWidth, height: artHeight)
+                    .contentShape(Rectangle())
+                    .position(x: horizontal + artWidth / 2, y: handleHeight + artHeight / 2)
+                    .allowsHitTesting(!wide && !lyrics)
+                    .gesture(DragGesture(minimumDistance: 20).onEnded { value in
+                        guard state.current?.kind != "episode", abs(value.translation.width) >= 42,
+                              abs(value.translation.width) > abs(value.translation.height) * 1.25 else { return }
+                        lyrics = value.translation.width < 0; fullLyrics = false
+                    })
+                footer(compact: compact, landscape: wide)
+                    .padding(.top, compact ? (wide ? 2 : 3) : 10)
+                    .padding(.bottom, bottom)
+                    .frame(width: max(0, wide ? lyricWidth : proxy.size.width - 50))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background { GeometryReader { controls in Color.clear.preference(key: PlayerFooterHeightKey.self, value: controls.size.height) } }
+                    .position(x: wide ? lyricX + lyricWidth / 2 : proxy.size.width / 2,
+                              y: proxy.size.height - footerHeight / 2)
+                    .opacity(hidden || footerHeight <= 0 ? 0 : 1).offset(y: hidden ? 10 : 0)
+                    .animation(controlsAnimation, value: hidden)
+                    .allowsHitTesting(!hidden).accessibilityHidden(hidden)
+                    .accessibilityIdentifier(wide ? "player-landscape-controls" : "player-controls")
+                Button { dismiss() } label: {
+                    Capsule().fill(muted.opacity(0.5)).frame(width: 42, height: 4).frame(width: 64, height: handleHeight)
+                }.position(x: proxy.size.width / 2, y: handleHeight / 2)
+                    .opacity(hidden ? 0 : 1).offset(y: hidden ? -8 : 0)
+                    .animation(controlsAnimation, value: hidden).allowsHitTesting(!hidden).accessibilityHidden(hidden)
+                    .accessibilityLabel("收起播放器")
+                PlayerNotice(player: engine, color: accent).frame(width: min(340, lyricWidth))
+                    .position(x: lyricX + lyricWidth / 2, y: proxy.size.height - bottom - 28)
+                    .opacity(hidden ? 1 : 0).allowsHitTesting(false).accessibilityHidden(!hidden)
+            }.foregroundStyle(ink)
+                .onPreferenceChange(PlayerFooterHeightKey.self) { height in
+                    if height > 0, abs(height - footerHeight) > 0.5 { footerHeight = height }
+                }
+                .statusBarHidden(wide)
+                .onChange(of: wide) { _, _ in landscapeControlsHidden = false; fullLyrics = false }
+                .onChange(of: vinyl) { _, _ in if !wide { lyrics = false; fullLyrics = false } }
         }
-            .preferredColorScheme(dark ? .dark : .light)
-            .onAppear { UIApplication.shared.isIdleTimerDisabled = keepScreenOn }
-            .onChange(of: keepScreenOn) { _, value in UIApplication.shared.isIdleTimerDisabled = value }
-            .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
-            .sheet(isPresented: $player.showQueue) { QueueView().environmentObject(store).environmentObject(player) }
-            .sheet(isPresented: $menu) { PlayerMenuView().environmentObject(store).environmentObject(player) }
-            .sheet(isPresented: $cast) { CastView(player: player).environmentObject(store).environmentObject(player) }
-            .sheet(item: $qualityItem) { item in PlayerQualityChoice(item: item).environmentObject(store).environmentObject(player) }
-            .sheet(isPresented: $chooseMode) { PlayerChoice(title: "播放模式", rows: PlayMode.allCases.map { $0.title }, selected: player.mode.title) { value in if let mode = PlayMode.allCases.first(where: { $0.title == value }) { player.mode = mode } } }
-            .sheet(isPresented: $sleep) { PlayerChoice(title: "定时关闭", rows: ["15 分钟","30 分钟","45 分钟","60 分钟","90 分钟","播完当前内容暂停","关闭定时"], selected: "") { value in if value == "播完当前内容暂停" { player.sleepAfterCurrent = true; player.sleepUntil = nil } else { player.setSleep(Int(value.components(separatedBy: " ").first ?? "")) } } }
-    }
-    @ViewBuilder private var stage: some View {
-        if lyrics { lyricStage() }
-        else { artworkStage() }
-    }
-    private func lyricStage(expandable: Bool = true, compact: Bool = false) -> some View {
-        let activeID = activeLine?.id
-        return ScrollViewReader { reader in
-                ScrollView {
-                    VStack(spacing: compact ? 16 : 24) {
-                        if player.lyrics.isEmpty { Text(player.lyricText.isEmpty ? (player.current?.kind == "episode" ? "有声书暂无歌词" : "暂无歌词") : player.lyricText).font(.system(size: compact ? 16 : 20)).lineSpacing(compact ? 8 : 14).frame(maxWidth: .infinity).padding(.vertical, compact ? 12 : 60) }
-                        ForEach(player.lyrics) { line in
-                            Button { player.seek(line.time) } label: { lyricLine(line, active: activeID == line.id, compact: compact) }.buttonStyle(.plain).id(line.id)
-                        }
-                    }.padding(.vertical, compact ? 12 : 50).padding(.horizontal, compact ? 8 : 24).contentShape(Rectangle())
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onChange(of: activeID, initial: true) { _, id in if let id { withAnimation { reader.scrollTo(id, anchor: .center) } } }
-                .onTapGesture {
-                    if expandable { withAnimation { fullLyrics.toggle() } }
-                }
-            }
-    }
-    private func lyricLine(_ line: LyricLine, active: Bool, compact: Bool) -> some View {
-        Text(line.text.isEmpty ? "♪" : line.text)
-            .font(.system(size: active ? (compact ? 19 : 25) : (compact ? 16 : 21), weight: active ? .bold : .medium))
-            .foregroundStyle(ink.opacity(active ? 1 : 0.35))
-            .multilineTextAlignment(.center).frame(maxWidth: .infinity)
-    }
-    private func artworkStage(maximumEdge: CGFloat = 350) -> some View {
-            GeometryReader { proxy in
-                let edge = max(0, min(maximumEdge, min(proxy.size.width, proxy.size.height)))
-                if let item = player.current {
-                    Group {
-                        if vinyl && item.kind != "episode" {
-                            PlayerVinyl(item: item, edge: edge, playing: player.playing)
-                        } else { Artwork(item: item, size: item.kind == "episode" ? edge * 0.77 : edge).shadow(color: .black.opacity(0.25), radius: 8, y: 5) }
-                    }.position(x: proxy.size.width / 2, y: proxy.size.height / 2)
-                }
-            }
+        .preferredColorScheme(dark ? .dark : .light)
+        .onAppear { UIApplication.shared.isIdleTimerDisabled = keepScreenOn }
+        .onChange(of: keepScreenOn) { _, value in UIApplication.shared.isIdleTimerDisabled = value }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        .sheet(isPresented: Binding(get: { state.showQueue }, set: { engine.showQueue = $0 })) { QueueView().environmentObject(store).environmentObject(engine) }
+        .sheet(isPresented: $menu) { PlayerMenuView().environmentObject(store).environmentObject(engine) }
+        .sheet(isPresented: $cast) { CastView(player: engine).environmentObject(store).environmentObject(engine) }
+        .sheet(item: $qualityItem) { item in PlayerQualityChoice(item: item).environmentObject(store).environmentObject(engine) }
+        .sheet(isPresented: $chooseMode) { PlayerChoice(title: "播放模式", rows: PlayMode.allCases.map { $0.title }, selected: state.mode.title) { value in if let mode = PlayMode.allCases.first(where: { $0.title == value }) { engine.mode = mode } } }
+        .sheet(isPresented: $sleep) { PlayerChoice(title: "定时关闭", rows: ["15 分钟","30 分钟","45 分钟","60 分钟","90 分钟","播完当前内容暂停","关闭定时"], selected: "") { value in if value == "播完当前内容暂停" { engine.sleepAfterCurrent = true; engine.sleepUntil = nil } else { engine.setSleep(Int(value.components(separatedBy: " ").first ?? "")) } } }
     }
     private func footer(compact: Bool, landscape: Bool = false) -> some View {
         let tight = landscape && compact
         return VStack(spacing: compact ? 3 : 8) {
             GeometryReader { metadata in
               HStack(spacing: 7) {
-                VStack(alignment: .leading, spacing: tight ? 3 : 6) { Text(player.current?.title ?? "音浪").font(.system(size: tight ? 18 : 23, weight: .bold)).lineLimit(compact ? 1 : 2); Text(player.current?.subtitle ?? "").font(.system(size: tight ? 12 : 14)).foregroundStyle(muted).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: tight ? 3 : 6) { Text(state.current?.title ?? "音浪").font(.system(size: tight ? 18 : 23, weight: .bold)).lineLimit(compact ? 1 : 2); Text(state.current?.subtitle ?? "").font(.system(size: tight ? 12 : 14)).foregroundStyle(muted).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading)
                 if metadata.size.width >= 560 {
                     Color.clear.frame(width: min(300, metadata.size.width * 0.42)).overlay {
-                        ResolutionNoticeView(color: accent)
+                        PlayerNotice(player: engine, color: accent)
                     }
                 }
-                if let item = player.current, item.kind != "episode" { Button { store.toggleLike(item) } label: { YLIcon(systemName: store.isLiked(item) ? "star.fill" : "star", size: 20).frame(width: 44, height: 48) }.accessibilityLabel("收藏歌曲") }
+                if let item = state.current, item.kind != "episode" { Button { store.toggleLike(item) } label: { YLIcon(systemName: store.isLiked(item) ? "star.fill" : "star", size: 20).frame(width: 44, height: 48) }.accessibilityLabel("收藏歌曲") }
                 Button { menu = true } label: { YLIcon(systemName: "ellipsis", size: 20).frame(width: 44, height: 48) }.accessibilityLabel("播放器菜单")
               }.frame(height: metadata.size.height).overlay(alignment: .top) {
                   if metadata.size.width < 560 {
-                      ResolutionNoticeView(color: accent).frame(maxWidth: 340).offset(y: -52)
+                      PlayerNotice(player: engine, color: accent).frame(maxWidth: 340).offset(y: -52)
                   }
               }
             }.frame(height: tight ? 54 : 68)
-            BufferedProgress(value: player.elapsed, duration: player.duration, buffered: player.buffered, color: accent, change: player.seek).frame(height: tight ? 20 : 26)
-            HStack { Text(clockText(player.elapsed)); Spacer(); Text(clockText(player.duration)) }.font(.system(size: 12).monospacedDigit()).foregroundStyle(muted)
+            PlayerProgressSection(player: engine, color: accent, muted: muted, tight: tight, compact: compact)
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
-                Button { qualityItem = player.current } label: {
-                    Text(player.audioInfo.text).font(.system(size: tight ? 11 : 12, weight: .semibold)).foregroundStyle(muted).lineLimit(1)
+                Button { qualityItem = state.current } label: {
+                    Text(state.audioInfo.text).font(.system(size: tight ? 11 : 12, weight: .semibold)).foregroundStyle(muted).lineLimit(1)
                         .frame(minHeight: tight ? 16 : 20).contentShape(Rectangle())
-                }.buttonStyle(.plain).disabled(!PlayerQualityChoice.canSelect(player.current))
-                    .accessibilityLabel("音质 " + player.audioInfo.text).accessibilityHint("选择播放音质").accessibilityIdentifier("player-audio-info")
+                }.buttonStyle(.plain).disabled(!PlayerQualityChoice.canSelect(state.current))
+                    .accessibilityLabel("音质 " + state.audioInfo.text).accessibilityHint("选择播放音质").accessibilityIdentifier("player-audio-info")
                 Spacer(minLength: 0)
             }.frame(minHeight: tight ? 16 : 20)
             GeometryReader { controls in
                 // Offset fixed-size controls from the center. position() wraps
                 // its child in a full-size frame; no wrapper should be tappable.
                 ZStack {
-                    trackButton("backward.end.fill", "上一首", "player-previous", size: tight ? 24 : compact ? 28 : 33) { player.previous() }
+                    trackButton("backward.end.fill", "上一首", "player-previous", size: tight ? 24 : compact ? 28 : 33) { engine.previous() }
                         .offset(x: -controls.size.width / 4)
-                    Button { player.toggle() } label: { Group { if player.loading { ProgressView().tint(ink) } else { YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: tight ? 30 : compact ? 36 : 44) } }.frame(width: tight ? 44 : compact ? 57 : 70, height: tight ? 44 : compact ? 57 : 70) }.accessibilityLabel(player.playing ? "暂停" : "播放")
-                    trackButton("forward.end.fill", "下一首", "player-next", size: tight ? 24 : compact ? 28 : 33) { player.next() }
+                    Button { engine.toggle() } label: { Group { if state.loading { ProgressView().tint(ink) } else { YLIcon(systemName: state.playing ? "pause.fill" : "play.fill", size: tight ? 30 : compact ? 36 : 44) } }.frame(width: tight ? 44 : compact ? 57 : 70, height: tight ? 44 : compact ? 57 : 70) }.accessibilityLabel(state.playing ? "暂停" : "播放")
+                    trackButton("forward.end.fill", "下一首", "player-next", size: tight ? 24 : compact ? 28 : 33) { engine.next() }
                         .offset(x: controls.size.width / 4)
                 }.frame(width: controls.size.width, height: controls.size.height)
             }.frame(height: tight ? 44 : compact ? 57 : 70)
-            if !compact || player.airPlayActive { SystemVolume().tint(accent).frame(height: 28).padding(.horizontal, 10) }
+            if !compact || state.airPlayActive { SystemVolume().tint(accent).frame(height: 28).padding(.horizontal, 10) }
             HStack(spacing: 0) {
-                if player.current?.kind == "episode" { tool("gobackward.15", "后退15秒") { player.seek(player.elapsed - 15) }; tool("goforward.30", "前进30秒") { player.seek(player.elapsed + 30) } }
+                if state.current?.kind == "episode" { tool("gobackward.15", "后退15秒") { engine.seek(engine.elapsed - 15) }; tool("goforward.30", "前进30秒") { engine.seek(engine.elapsed + 30) } }
                 else {
                     if landscape { tool(vinyl ? "photo" : "opticaldisc", vinyl ? "显示封面" : "显示旋转唱片") { vinyl.toggle() } }
-                    else { tool("quote.bubble", "显示歌词") { withAnimation { lyrics.toggle() } } }
-                    tool(player.mode.icon, player.mode.title) { let modes = PlayMode.allCases; if let index = modes.firstIndex(of: player.mode) { player.mode = modes[(index + 1) % modes.count] } }.onLongPressGesture { chooseMode = true }.accessibilityIdentifier("player-mode")
+                    else { tool("quote.bubble", "显示歌词") { lyrics.toggle(); if !lyrics { fullLyrics = false } } }
+                    tool(state.mode.icon, state.mode.title) { let modes = PlayMode.allCases; if let index = modes.firstIndex(of: engine.mode) { engine.mode = modes[(index + 1) % modes.count] } }.onLongPressGesture { chooseMode = true }.accessibilityIdentifier("player-mode")
                 }
                 tool(dark ? "sun.max" : "moon", "播放器明暗") { dark.toggle() }
                 tool("timer", "定时关闭") { sleep = true }
-                if player.casting {
+                if state.casting {
                     tool("hifispeaker", "管理 DLNA 投送") { cast = true }.accessibilityIdentifier("player-cast")
                 } else {
-                    AirPlayPicker(dark: dark, tintColor: UIColor(accent)).frame(maxWidth: .infinity).frame(height: 44)
+                    PlayerRoutePicker(player: engine, dark: dark, tintColor: UIColor(accent)).frame(maxWidth: .infinity).frame(height: 44)
                         .accessibilityLabel("AirPlay 投送").accessibilityIdentifier("player-cast")
                 }
-                tool("list.bullet", "播放队列") { player.showQueue = true }
+                tool("list.bullet", "播放队列") { engine.showQueue = true }
             }
         }.buttonStyle(.plain)
     }
@@ -288,213 +272,24 @@ struct PlayerView: View {
     }
     private func tool(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View { Button(action: action) { YLIcon(systemName: icon, size: 22).frame(maxWidth: .infinity).frame(height: 44) }.accessibilityLabel(label) }
 }
-private struct LandscapeFooterHeightKey: PreferenceKey {
+private struct PlayerFooterHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
-// Only the reveal mask changes height; the lyric scroll view keeps one viewport
-// and one content layout, so hiding controls does not reflow every lyric line.
-private struct LandscapePlayerLyrics: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let lines: [LyricLine]
-    let activeID: String?
-    let fallbackText: String
-    let compact: Bool
-    let ink: Color
-    let controlsHidden: Bool
-    let controlsHeight: CGFloat
-    let ready: Bool
-    let toggleControls: () -> Void
-    private var animation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.22) }
-    var body: some View {
-        GeometryReader { proxy in
-            let height = proxy.size.height
-            let visibleHeight = controlsHidden ? height : max(0, height - controlsHeight)
-            let anchor = UnitPoint(x: 0.5, y: height > 0 ? visibleHeight / (2 * height) : 0.5)
-            let targetID = activeID ?? lines.first?.id
-            ScrollViewReader { reader in
-                ScrollView {
-                    LandscapeLyricRows(lines: lines, activeID: activeID, fallbackText: fallbackText,
-                                       compact: compact, ink: ink, canvasHeight: height).equatable()
-                }
-                .scrollIndicators(.hidden)
-                .frame(width: proxy.size.width, height: height)
-                .mask(alignment: .top) {
-                    Rectangle().frame(height: visibleHeight).animation(animation, value: controlsHidden)
-                }
-                .opacity(ready ? 1 : 0)
-                .contentShape(LandscapeLyricViewport(height: visibleHeight))
-                .onTapGesture(perform: toggleControls)
-                .onChange(of: targetID, initial: true) { previous, id in
-                    guard let id else { return }
-                    withAnimation(previous == nil ? nil : animation) { reader.scrollTo(id, anchor: anchor) }
-                }
-                .onChange(of: controlsHidden) { _, _ in
-                    guard let targetID else { return }
-                    withAnimation(animation) { reader.scrollTo(targetID, anchor: anchor) }
-                }
-                .onChange(of: controlsHeight) { _, _ in
-                    guard let targetID else { return }
-                    withAnimation(nil) { reader.scrollTo(targetID, anchor: anchor) }
-                }
-                .onChange(of: proxy.size) { _, _ in
-                    guard let targetID else { return }
-                    withAnimation(nil) { reader.scrollTo(targetID, anchor: anchor) }
-                }
-            }
-        }
-    }
-}
-
-private struct LandscapeLyricViewport: Shape {
-    let height: CGFloat
-    func path(in rect: CGRect) -> Path {
-        Path(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: min(rect.height, max(0, height))))
-    }
-}
-
-// Player publishes progress twice per second. Rebuild the lyric rows only when
-// the highlighted line, lyrics, appearance, or actual window size changes.
-private struct LandscapeLyricRows: View, Equatable {
-    let lines: [LyricLine]
-    let activeID: String?
-    let fallbackText: String
-    let compact: Bool
-    let ink: Color
-    let canvasHeight: CGFloat
-    var body: some View {
-        VStack(spacing: compact ? 16 : 24) {
-            if lines.isEmpty {
-                Text(fallbackText).font(.system(size: compact ? 16 : 20)).lineSpacing(compact ? 8 : 14)
-                    .frame(maxWidth: .infinity).padding(.vertical, compact ? 12 : 60)
-            }
-            ForEach(lines) { line in
-                let active = activeID == line.id
-                Text(line.text.isEmpty ? "♪" : line.text)
-                    .font(.system(size: active ? (compact ? 19 : 25) : (compact ? 16 : 21), weight: active ? .bold : .medium))
-                    .foregroundStyle(ink.opacity(active ? 1 : 0.35))
-                    .multilineTextAlignment(.center).frame(maxWidth: .infinity).id(line.id)
-            }
-        }
-        .padding(.top, lines.isEmpty ? (compact ? 12 : 50) : canvasHeight / 2)
-        // The full-height canvas also needs space to center the last line in
-        // the smaller visible region above the controls.
-        .padding(.bottom, lines.isEmpty ? (compact ? 12 : 50) : canvasHeight)
-        .padding(.horizontal, compact ? 8 : 24)
-    }
-}
-
-struct PlayerBackdrop: View, Equatable {
-    let url: URL?
-    let size: CGSize
-    let dark: Bool
-    var body: some View {
-        RemoteImage(url: url) { image in image.resizable().scaledToFill().frame(width: size.width, height: size.height).clipped().blur(radius: 75).opacity(dark ? 0.35 : 0.22) } placeholder: { Color.clear }
-    }
-}
 struct PlayerVinyl: View {
-    let item: MediaItem
-    let edge: CGFloat
-    let playing: Bool
-    @Environment(\.scenePhase) private var scenePhase
-    var body: some View {
-        VinylRotationSurface(item: item, edge: edge, playing: playing && scenePhase == .active)
-            .frame(width: edge, height: edge)
-    }
-}
-private struct VinylDiscArtwork: View {
-    let item: MediaItem
-    let edge: CGFloat
-    var body: some View {
-        ZStack {
-            Circle().fill(Color(white: 0.06))
-            ForEach(0..<22) { index in Circle().stroke(.white.opacity(index % 3 == 0 ? 0.12 : 0.05), lineWidth: 1).padding(CGFloat(10 + index * 4)) }
-            Artwork(item: item, size: edge * 0.43).clipShape(Circle())
-            Circle().fill(.black).frame(width: 13, height: 13)
-        }.frame(width: edge, height: edge)
-    }
-}
-private struct VinylRotationSurface: UIViewRepresentable {
     @EnvironmentObject private var store: AppStore
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var artworkSource = PlayerArtworkSource()
     let item: MediaItem
     let edge: CGFloat
     let playing: Bool
-    func makeUIView(context: Context) -> VinylRotationView { VinylRotationView(frame: .zero) }
-    func updateUIView(_ view: VinylRotationView, context: Context) {
-        view.configure(item: item, edge: edge, store: store)
-        view.setPlaying(playing)
-    }
-    static func dismantleUIView(_ view: VinylRotationView, coordinator: ()) { view.setPlaying(false) }
-}
-// Rotation belongs to one layer, independent of Player's progress publications
-// and SwiftUI animation transactions. Android also uses 24 seconds per turn.
-private final class VinylRotationView: UIView {
-    private static let secondsPerTurn: CFTimeInterval = 24
-    private let hosting = UIHostingController(rootView: AnyView(EmptyView()))
-    private var displayedItem: MediaItem?
-    private var displayedEdge: CGFloat = 0
-    private var wantsPlaying = false
-    private var rotating = false
-    private var angle = 0.0
-    private var startedAt: CFTimeInterval = 0
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        backgroundColor = .clear
-        isUserInteractionEnabled = false
-        hosting.view.backgroundColor = .clear
-        hosting.view.isUserInteractionEnabled = false
-        hosting.safeAreaRegions = []
-        addSubview(hosting.view)
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    func configure(item: MediaItem, edge: CGFloat, store: AppStore) {
-        guard displayedItem != item || displayedEdge != edge else { return }
-        displayedItem = item; displayedEdge = edge
-        hosting.rootView = AnyView(VinylDiscArtwork(item: item, edge: edge).environmentObject(store))
-        setNeedsLayout()
-    }
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        // Updating a rotated view's frame can change its bounds and distort
-        // the disc; update untransformed bounds and center instead.
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        hosting.view.bounds = CGRect(origin: .zero, size: bounds.size)
-        hosting.view.center = CGPoint(x: bounds.midX, y: bounds.midY)
-        CATransaction.commit()
-    }
-    override func didMoveToWindow() { super.didMoveToWindow(); updateRotation() }
-    func setPlaying(_ playing: Bool) { wantsPlaying = playing; updateRotation() }
-    private func updateRotation() {
-        let layer = hosting.view.layer
-        let shouldRotate = wantsPlaying && window != nil
-        guard shouldRotate != rotating || (rotating && layer.animation(forKey: "vinyl-rotation") == nil) else { return }
-        let now = CACurrentMediaTime()
-        if rotating {
-            // Capture the visible angle before removing the animation. The
-            // monotonic clock is a fallback if the layer is no longer visible.
-            if let visible = layer.presentation() {
-                angle = atan2(Double(visible.transform.m12), Double(visible.transform.m11))
-            } else {
-                angle = (angle + (now - startedAt) * 2 * .pi / Self.secondsPerTurn).truncatingRemainder(dividingBy: 2 * .pi)
-            }
-            CATransaction.begin(); CATransaction.setDisableActions(true)
-            layer.setValue(angle, forKeyPath: "transform.rotation.z")
-            layer.removeAnimation(forKey: "vinyl-rotation")
-            CATransaction.commit()
-            rotating = false
-        }
-        guard shouldRotate else { return }
-        let rotation = CABasicAnimation(keyPath: "transform.rotation.z")
-        rotation.fromValue = angle
-        rotation.toValue = angle + 2 * .pi
-        rotation.duration = Self.secondsPerTurn
-        rotation.timingFunction = CAMediaTimingFunction(name: .linear)
-        rotation.repeatCount = .infinity
-        layer.add(rotation, forKey: "vinyl-rotation")
-        startedAt = now; rotating = true
+    var body: some View {
+        PlayerArtworkSurface(url: artworkSource.url(for: item, store: store), book: item.kind == "episode", vinyl: true,
+                             playing: playing, active: scenePhase == .active).frame(width: edge, height: edge)
     }
 }
+
 struct BufferedProgress: View {
     var value: Double
     var duration: Double
@@ -524,8 +319,15 @@ struct PlayerChoice: View {
     var body: some View { NavigationStack { AndroidList { ForEach(rows, id: \.self) { value in Button { choose(value); dismiss() } label: { HStack(spacing: 0) { Text(value == selected ? "✓" : "").font(.system(size: 23, weight: .bold)).foregroundStyle(Palette.accent).frame(width: 40); Text(value).font(.system(size: 18)).foregroundStyle(Palette.ink); Spacer() }.padding(.horizontal, 10).padding(.vertical, 18).contentShape(Rectangle()) } } }.androidPage(title, category: "") }.presentationDetents([.medium, .large]).presentationCornerRadius(30).presentationDragIndicator(.visible) }
 }
 
-struct AirPlayPicker: UIViewRepresentable {
+struct AirPlayPicker: View {
     @EnvironmentObject private var player: Player
+    var dark: Bool
+    var tintColor: UIColor? = nil
+    var body: some View { PlayerRoutePicker(player: player, dark: dark, tintColor: tintColor) }
+}
+
+struct PlayerRoutePicker: UIViewRepresentable {
+    let player: Player
     var dark: Bool
     var tintColor: UIColor? = nil
     func makeCoordinator() -> Coordinator { Coordinator(player: player) }

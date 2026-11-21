@@ -9,9 +9,12 @@ final class Player: ObservableObject {
     @Published var index = 0
     @Published var playing = false
     @Published var loading = false
-    @Published var elapsed = 0.0
-    @Published var duration = 0.0
-    @Published var buffered = 0.0
+    // Timing changes have their own publisher. Lists and the screen shell
+    // observe playback state without being invalidated by the half-second clock.
+    let progress = PlayerProgressClock()
+    var elapsed: Double { get { progress.elapsed } set { progress.elapsed = newValue } }
+    var duration: Double { get { progress.duration } set { progress.duration = newValue } }
+    var buffered: Double { get { progress.buffered } set { progress.buffered = newValue } }
     @Published var lyrics: [LyricLine] = []
     @Published var lyricText = ""
     @Published var status = "选择一首喜欢的音乐"
@@ -58,6 +61,8 @@ final class Player: ObservableObject {
     private var generation = UUID()
     private var store: AppStore?
     private var lastSavedSecond = -1
+    private let historyWriter = PlaybackHistoryWriter()
+    private var rememberedProgress: [String: Double] = [:]
     private var wasPlayingBeforeInterruption = false
     private var remotePolling = false
     private var lastRemotePoll = Date.distantPast
@@ -211,9 +216,9 @@ final class Player: ObservableObject {
                 }
                 audio.replaceCurrentItem(with: item); status = source
                 if current.kind == "episode" {
-                    let previous = UserDefaults.standard.double(forKey: "progress:" + current.id)
+                    let previous = rememberedProgress[current.id] ?? UserDefaults.standard.double(forKey: "progress:" + current.id)
                     if let resumeAt { seek(resumeAt) } else if previous > 0 { seek(previous) }
-                    store.nowBook = current; Disk.save(Optional(current), "last-book.json")
+                    store.nowBook = current; historyWriter.saveBook(current)
                 } else if let resumeAt { seek(resumeAt) }
                 resume(); updateNowPlaying()
                 // Cache independently of lyrics; a slow lyric source must not
@@ -485,7 +490,12 @@ final class Player: ObservableObject {
         prepareNextIfNeeded(); updateNowPlaying()
     }
     private func saveBookRate() { if let current, current.kind == "episode" { UserDefaults.standard.set(speed, forKey: "speed:" + current.raw.string("_book")) } }
-    private func saveProgress() { if let current { UserDefaults.standard.set(elapsed, forKey: "progress:" + current.id); if current.kind == "song" { Disk.save([current], "recent-music.json") } } }
+    private func saveProgress() {
+        guard let current else { return }
+        let id = current.id
+        rememberedProgress[id] = elapsed
+        historyWriter.save(current, id: id, position: elapsed)
+    }
     private func updateNowPlaying() {
         guard let current else { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil; return }
         var info: [String: Any] = [:]
