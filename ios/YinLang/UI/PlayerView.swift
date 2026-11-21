@@ -4,42 +4,78 @@ import MediaPlayer
 import QuartzCore
 
 struct MiniPlayer: View {
-    @EnvironmentObject private var player: Player
-    var body: some View { MiniPlayerContent(clock: player.progress) }
+    var body: some View { MiniPlayerContent() }
 }
 
 private struct MiniPlayerContent: View {
-    @ObservedObject var clock: PlayerProgressClock
     @EnvironmentObject var player: Player
-    @EnvironmentObject var store: AppStore
     @AppStorage("mini-lyrics") private var lyricMode = "off"
-    private var active: Int? { player.lyrics.lastIndex { $0.time <= clock.elapsed } }
+    // Reserve the selected display mode even before lyrics arrive. Track and
+    // notice changes must never change the space taken from the page above.
+    private var contentHeight: CGFloat { lyricMode == "double" ? 64 : 48 }
     var body: some View {
         if let item = player.current {
-            VStack(spacing: 5) {
-                HStack(spacing: 6) {
-                    MiniPlayerCover(item: item)
-                    Button { player.showPlayer = true } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            if player.resolutionNotice != nil {
-                                ResolutionNoticeView().frame(maxWidth: .infinity, minHeight: 35)
-                            } else {
-                            Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1)
-                            if lyricMode != "off", let active {
-                                Text(player.lyrics[active].text).font(.system(size: 12)).foregroundStyle(Palette.accent).lineLimit(1)
-                                if lyricMode == "double", player.lyrics.indices.contains(active + 1) { Text(player.lyrics[active + 1].text).font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1) }
-                            } else { Text(item.subtitle).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(1) }
-                            }
-                            GeometryReader { proxy in Capsule().fill(Palette.soft).overlay(alignment: .leading) { Capsule().fill(Palette.accent).frame(width: proxy.size.width * min(1, clock.duration > 0 ? clock.elapsed / clock.duration : 0)) } }.frame(height: 3).padding(.top, 1)
-                        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityIdentifier("mini-open-player")
-                    HStack(spacing: 0) {
-                        Button { player.previous() } label: { YLIcon(systemName: "backward.end.fill", size: 21).frame(width: 44, height: 48).contentShape(Rectangle()) }.accessibilityLabel("上一首").accessibilityIdentifier("mini-previous")
-                        Button { player.next() } label: { YLIcon(systemName: "forward.end.fill", size: 21).frame(width: 44, height: 48).contentShape(Rectangle()) }.accessibilityLabel("下一首").accessibilityIdentifier("mini-next")
-                        Button { player.showQueue = true } label: { YLIcon(systemName: "list.bullet", size: 21).frame(width: 44, height: 48).contentShape(Rectangle()) }.accessibilityLabel("播放队列").accessibilityIdentifier("mini-queue")
-                    }.buttonStyle(.plain).foregroundStyle(Palette.accent)
-                }.padding(.horizontal, 8).padding(.vertical, 6).background(Palette.paper.opacity(0.95), in: RoundedRectangle(cornerRadius: 30)).overlay { RoundedRectangle(cornerRadius: 30).stroke(.white.opacity(0.25), lineWidth: 1) }.shadow(color: .black.opacity(0.1), radius: 6, y: 2)
-            }.padding(.horizontal, 14).padding(.bottom, 10).padding(.top, 5)
+            HStack(spacing: 6) {
+                MiniPlayerCover(item: item).frame(width: 48, height: 48)
+                Button { player.showPlayer = true } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ZStack(alignment: .leading) {
+                            MiniPlayerText(item: item, lines: player.lyrics, lyricMode: lyricMode, clock: player.progress)
+                                .opacity(player.resolutionNotice == nil ? 1 : 0)
+                                .accessibilityHidden(player.resolutionNotice != nil)
+                            PlayerNotice(player: player, color: Palette.accent)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .opacity(player.resolutionNotice == nil ? 0 : 1)
+                                .accessibilityHidden(player.resolutionNotice == nil)
+                        }.frame(maxWidth: .infinity).frame(height: contentHeight - 8).clipped()
+                        MiniPlayerProgress(clock: player.progress).frame(height: 3).padding(.top, 1)
+                    }.frame(maxWidth: .infinity, alignment: .leading).frame(height: contentHeight).contentShape(Rectangle())
+                }.buttonStyle(.plain).frame(maxWidth: .infinity).accessibilityIdentifier("mini-open-player")
+                HStack(spacing: 0) {
+                    Button { player.previous() } label: { YLIcon(systemName: "backward.end.fill", size: 21).frame(width: 44, height: 48).contentShape(Rectangle()) }.accessibilityLabel("上一首").accessibilityIdentifier("mini-previous")
+                    Button { player.next() } label: { YLIcon(systemName: "forward.end.fill", size: 21).frame(width: 44, height: 48).contentShape(Rectangle()) }.accessibilityLabel("下一首").accessibilityIdentifier("mini-next")
+                    Button { player.showQueue = true } label: { YLIcon(systemName: "list.bullet", size: 21).frame(width: 44, height: 48).contentShape(Rectangle()) }.accessibilityLabel("播放队列").accessibilityIdentifier("mini-queue")
+                }.buttonStyle(.plain).foregroundStyle(Palette.accent).fixedSize(horizontal: true, vertical: false)
+            }.frame(maxWidth: .infinity).frame(height: contentHeight)
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .background(Palette.paper.opacity(0.95), in: RoundedRectangle(cornerRadius: 30))
+                .overlay { RoundedRectangle(cornerRadius: 30).stroke(.white.opacity(0.25), lineWidth: 1) }
+                .shadow(color: .black.opacity(0.1), radius: 6, y: 2)
+                .padding(.horizontal, 14).padding(.bottom, 10).padding(.top, 5)
+                // Source notices publish with an animation for the full
+                // player; do not inherit it into the mini-player's layout.
+                .transaction { $0.animation = nil }
+        }
+    }
+}
+
+private struct MiniPlayerText: View {
+    let item: MediaItem
+    let lines: [LyricLine]
+    let lyricMode: String
+    @ObservedObject var clock: PlayerProgressClock
+    var body: some View {
+        let active = lyricMode == "off" ? nil : lines.lastIndex { $0.time <= clock.elapsed }
+        let subtitle = active.map { lines[$0].text } ?? item.subtitle
+        let next = active.flatMap { lines.indices.contains($0 + 1) ? lines[$0 + 1].text : nil } ?? ""
+        VStack(alignment: .leading, spacing: 4) {
+            Text(item.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink).lineLimit(1)
+            Text(subtitle).font(.system(size: 12)).foregroundStyle(active == nil ? Palette.muted : Palette.accent).lineLimit(1)
+            if lyricMode == "double" {
+                Text(next).font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1).frame(height: 14)
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+}
+
+private struct MiniPlayerProgress: View {
+    @ObservedObject var clock: PlayerProgressClock
+    var body: some View {
+        let value = clock.duration > 0 ? min(1, max(0, clock.elapsed / clock.duration)) : 0
+        GeometryReader { proxy in
+            Capsule().fill(Palette.soft).overlay(alignment: .leading) {
+                Capsule().fill(Palette.accent).frame(width: proxy.size.width * value)
+            }
         }
     }
 }
@@ -61,6 +97,7 @@ private struct MiniPlayerCover: View {
                     YLIcon(systemName: player.playing ? "pause.fill" : "play.fill", size: 24).foregroundStyle(.white)
                 }
             }.clipShape(RoundedRectangle(cornerRadius: 11)).contentShape(Rectangle())
+                .animation(.easeOut(duration: 0.18), value: coverControlVisible)
         }.buttonStyle(.plain).accessibilityLabel(player.playing ? "暂停" : "播放").accessibilityIdentifier("mini-play-pause").onLongPressGesture { player.showPlayer = true }
             .task(id: coverControlRevision) {
                 do { try await Task.sleep(for: .seconds(2)) } catch { return }
