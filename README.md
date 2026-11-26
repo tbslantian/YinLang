@@ -2,6 +2,46 @@
 
 音浪是面向 Android、iPhone 和 iPad 的音乐与有声书播放器。一个应用里可以逛在线排行榜、播放自己在 Navidrome 上收藏的专辑，也可以在断网后继续听已缓存的歌曲和章节。
 
+## 应用截图
+
+从黑胶唱片播放器和同步歌词，到 Navidrome 曲库与在线榜单，下面展示应用的主要界面。
+
+### 播放器与歌词
+
+<table>
+<tbody>
+<tr>
+<td align="center" width="50%"><img src="https://raw.githubusercontent.com/tbslantian/YinLang/main/screenshots/player-vinyl-dark.jpg" alt="黑胶唱片播放器" width="260"><br><b>黑胶唱片与播放信息</b></td>
+<td align="center" width="50%"><img src="https://raw.githubusercontent.com/tbslantian/YinLang/main/screenshots/player-vinyl-red.jpg" alt="唱片封面播放器" width="260"><br><b>唱片封面与播放控制</b></td>
+</tr>
+<tr>
+<td align="center" width="50%"><img src="https://raw.githubusercontent.com/tbslantian/YinLang/main/screenshots/player-landscape.jpg" alt="横屏播放器" width="420"><br><b>横屏播放器布局</b></td>
+<td align="center" width="50%"><img src="https://raw.githubusercontent.com/tbslantian/YinLang/main/screenshots/player-landscape-lyrics.jpg" alt="横屏播放器与歌词" width="420"><br><b>横屏并排查看封面与歌词</b></td>
+</tr>
+<tr>
+<td align="center" width="50%"><img src="https://raw.githubusercontent.com/tbslantian/YinLang/main/screenshots/player-landscape-controls.jpg" alt="横屏播放进度与控制" width="420"><br><b>播放进度与控制</b></td>
+<td align="center" width="50%"><img src="https://raw.githubusercontent.com/tbslantian/YinLang/main/screenshots/lyrics-fullscreen.jpg" alt="全屏同步歌词" width="260"><br><b>全屏同步歌词</b></td>
+</tr>
+</tbody>
+</table>
+
+### Navidrome 曲库
+
+<table>
+<tbody>
+<tr>
+<td align="center" width="50%"><img src="https://raw.githubusercontent.com/tbslantian/YinLang/main/screenshots/navidrome-library.jpg" alt="Navidrome 音乐库首页" width="260"><br><b>音乐库首页与歌单</b></td>
+<td align="center" width="50%"><img src="https://raw.githubusercontent.com/tbslantian/YinLang/main/screenshots/navidrome-discover.jpg" alt="Navidrome 曲库发现页" width="260"><br><b>随心听、常听专辑与随机推荐</b></td>
+</tr>
+</tbody>
+</table>
+
+### 在线排行榜
+
+<p align="center"><img src="https://raw.githubusercontent.com/tbslantian/YinLang/main/screenshots/online-charts-source-picker.jpg" alt="在线排行榜音乐平台选择" width="300"></p>
+
+在线排行榜可在网易云音乐、QQ 音乐、酷狗、酷我和咪咕音乐等平台间切换。
+
 ## 在线音乐
 
 - 在网易云音乐、QQ 音乐、酷狗音乐、酷我音乐和咪咕音乐间搜索歌曲，按平台浏览排行榜。在线歌单可按分类或关键词查找，也能通过分享链接打开。榜单和歌单支持列表、卡片布局，列数可按屏幕宽度调整。
