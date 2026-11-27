@@ -1,0 +1,8 @@
+{
+  "versionCode": 37,
+  "versionName": "0.8.1",
+  "notes": "新增安卓应用更新检查，可在「总设置 → 关于」手动检查或开启自动检查。\n关于页面的项目链接已指向 YinLang 项目。\n包含网易云歌单详情、播放器菜单文字对比度和评论功能的近期修复。",
+  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.1/YinLang-0.8.1-release.apk",
+  "sha256": "efc696c425e1826d7df9d8e61bd9c4eeceac8954e5a22099314780872b6f8542",
+  "sizeBytes": 23447351
+}
