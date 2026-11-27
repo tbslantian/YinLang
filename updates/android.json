@@ -1,8 +1,8 @@
 {
-  "versionCode": 38,
+  "versionCode": 39,
   "versionName": "0.8.2",
-  "notes": "在「有声书 → 发现」和「有声书 → 搜索」新增网易云听书。\n支持章节分页、书架收藏和续听。章节使用已启用的网易云 LX 音源解析，需购买或仅可试听的章节会显示状态。",
-  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.2/YinLang-0.8.2-release.apk",
-  "sha256": "e1cf1c3036c1d8ddff9a35ebf7d41119b62e59ee00bcf60e5c54f597db30e35a",
-  "sizeBytes": 23464691
+  "notes": "移除上版新增的内置网易云听书接入。\n总设置 → 音乐设置为已导入的 LX 音源显示脚本声明支持的平台。",
+  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.2-build39/YinLang-0.8.2-build39.apk",
+  "sha256": "32703fd989d87a90922e05c31e794860da95821c7a7859663240819b5fc2ec0d",
+  "sizeBytes": 23463793
 }
