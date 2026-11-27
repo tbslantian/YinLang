@@ -1,8 +1,8 @@
 {
-  "versionCode": 37,
-  "versionName": "0.8.1",
-  "notes": "新增安卓应用更新检查，可在「总设置 → 关于」手动检查或开启自动检查。\n关于页面的项目链接已指向 YinLang 项目。\n包含网易云歌单详情、播放器菜单文字对比度和评论功能的近期修复。",
-  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.1/YinLang-0.8.1-release.apk",
-  "sha256": "efc696c425e1826d7df9d8e61bd9c4eeceac8954e5a22099314780872b6f8542",
-  "sizeBytes": 23447351
+  "versionCode": 38,
+  "versionName": "0.8.2",
+  "notes": "在「有声书 → 发现」和「有声书 → 搜索」新增网易云听书。\n支持章节分页、书架收藏和续听。章节使用已启用的网易云 LX 音源解析，需购买或仅可试听的章节会显示状态。",
+  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.2/YinLang-0.8.2-release.apk",
+  "sha256": "e1cf1c3036c1d8ddff9a35ebf7d41119b62e59ee00bcf60e5c54f597db30e35a",
+  "sizeBytes": 23464691
 }
