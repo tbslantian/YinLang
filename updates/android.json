@@ -1,8 +1,8 @@
 {
-  "versionCode": 50,
-  "versionName": "0.8.3",
-  "notes": "USB 直通和 Bit Perfect 同时开启时，DSD 默认优先尝试 Native DSD 原样输出。接口不兼容、文件无法直通或 USB 传输失败时回退到 PCM。\n立体声 DSF 和未压缩 DFF 可使用 Native DSD 或 DoP。明确支持 DoP 的 DAC 可以在播放器的 USB 直通设置里手动选用 DoP。\n兼容的 USB DAC 支持硬件音量调节。音频链路会显示实际使用的输出模式和回退原因。",
-  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.3/YinLang-0.8.3-release.apk",
-  "sha256": "f3feea3f251e0dfd9c7607b3e963a512c853197e74d5ee6a868e3c73088daa47",
-  "sizeBytes": 32770041
+  "versionCode": 51,
+  "versionName": "0.8.4",
+  "notes": "音轨分析新增估算动态范围（DR）、连续满幅事件和位置、估算真峰值位置及频谱上限。报告继续在独立解码链路上测量音轨。\nUSB Bit Perfect 跟随解码后的采样率，不重采样或抖动。兼容的 DAC 可原样传输 8、16、24、32 位整数 PCM 的样本值。音轨内拖动进度时可保留相同规格的 USB 接口。\n音频链路区分请求、等待传输、实际输出和回退原因。Native DSD 和 DoP 按已有设备设置工作。",
+  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.4/YinLang-0.8.4-release.apk",
+  "sha256": "1b6368bef9f4a97a84bd99a72fb05dc9fdfecf988620321cda7d93fbecc4444e",
+  "sizeBytes": 32786969
 }
