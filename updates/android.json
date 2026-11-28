@@ -1,8 +1,8 @@
 {
-  "versionCode": 39,
+  "versionCode": 45,
   "versionName": "0.8.2",
-  "notes": "移除上版新增的内置网易云听书接入。\n总设置 → 音乐设置为已导入的 LX 音源显示脚本声明支持的平台。",
-  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.2-build39/YinLang-0.8.2-build39.apk",
-  "sha256": "32703fd989d87a90922e05c31e794860da95821c7a7859663240819b5fc2ec0d",
-  "sizeBytes": 23463793
+  "notes": "音频链路显示解码器、PCM 规格、重采样、输出驱动和设备信息。常见格式支持内置 FFmpeg 解码。\n点击音频链路的音量读数，可通过放大的圆形旋钮调节媒体音量。\n修复暂停恢复后的本机歌曲和离线缓存的整轨分析，支持分析 8 位 PCM WAV。",
+  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.2-build45/YinLang-0.8.2-build45.apk",
+  "sha256": "1b40c1f952ed13b88f5b65d78528997078b6c124f9501a5788b83ef622f1c2f3",
+  "sizeBytes": 32752825
 }
