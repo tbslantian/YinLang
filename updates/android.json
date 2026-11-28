@@ -1,8 +1,8 @@
 {
-  "versionCode": 45,
-  "versionName": "0.8.2",
-  "notes": "音频链路显示解码器、PCM 规格、重采样、输出驱动和设备信息。常见格式支持内置 FFmpeg 解码。\n点击音频链路的音量读数，可通过放大的圆形旋钮调节媒体音量。\n修复暂停恢复后的本机歌曲和离线缓存的整轨分析，支持分析 8 位 PCM WAV。",
-  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.2-build45/YinLang-0.8.2-build45.apk",
-  "sha256": "1b40c1f952ed13b88f5b65d78528997078b6c124f9501a5788b83ef622f1c2f3",
-  "sizeBytes": 32752825
+  "versionCode": 50,
+  "versionName": "0.8.3",
+  "notes": "USB 直通和 Bit Perfect 同时开启时，DSD 默认优先尝试 Native DSD 原样输出。接口不兼容、文件无法直通或 USB 传输失败时回退到 PCM。\n立体声 DSF 和未压缩 DFF 可使用 Native DSD 或 DoP。明确支持 DoP 的 DAC 可以在播放器的 USB 直通设置里手动选用 DoP。\n兼容的 USB DAC 支持硬件音量调节。音频链路会显示实际使用的输出模式和回退原因。",
+  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.3/YinLang-0.8.3-release.apk",
+  "sha256": "f3feea3f251e0dfd9c7607b3e963a512c853197e74d5ee6a868e3c73088daa47",
+  "sizeBytes": 32770041
 }
