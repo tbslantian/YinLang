@@ -1,8 +1,8 @@
 {
-  "versionCode": 51,
-  "versionName": "0.8.4",
-  "notes": "音轨分析新增估算动态范围（DR）、连续满幅事件和位置、估算真峰值位置及频谱上限。报告继续在独立解码链路上测量音轨。\nUSB Bit Perfect 跟随解码后的采样率，不重采样或抖动。兼容的 DAC 可原样传输 8、16、24、32 位整数 PCM 的样本值。音轨内拖动进度时可保留相同规格的 USB 接口。\n音频链路区分请求、等待传输、实际输出和回退原因。Native DSD 和 DoP 按已有设备设置工作。",
-  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.4/YinLang-0.8.4-release.apk",
-  "sha256": "1b6368bef9f4a97a84bd99a72fb05dc9fdfecf988620321cda7d93fbecc4444e",
+  "versionCode": 52,
+  "versionName": "0.8.5",
+  "notes": "修复音轨分析进度可能长时间停住的问题。解码期间持续更新已分析的帧数，报告汇总在后台完成。读取或解码连续 25 秒没有进展时，显示错误并结束本次分析，可关闭后重试。",
+  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.5/YinLang-0.8.5-release.apk",
+  "sha256": "ab1e4fcfaa21cb85fda70b3b8ff62b41bf5d91a59c57c040fdb9e84c81ec7e73",
   "sizeBytes": 32786969
 }
