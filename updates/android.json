@@ -1,8 +1,8 @@
 {
-  "versionCode": 52,
-  "versionName": "0.8.5",
-  "notes": "修复音轨分析进度可能长时间停住的问题。解码期间持续更新已分析的帧数，报告汇总在后台完成。读取或解码连续 25 秒没有进展时，显示错误并结束本次分析，可关闭后重试。",
-  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.5/YinLang-0.8.5-release.apk",
-  "sha256": "ab1e4fcfaa21cb85fda70b3b8ff62b41bf5d91a59c57c040fdb9e84c81ec7e73",
+  "versionCode": 53,
+  "versionName": "0.8.6",
+  "notes": "修复 Navidrome 等来源的较长 FLAC 在整轨分析过程中停住的问题。分析按照解码器时间戳反馈进度，让后续缓冲持续加载。",
+  "apkUrl": "https://github.com/tbslantian/YinLang/releases/download/android-v0.8.6/YinLang-0.8.6-release.apk",
+  "sha256": "b3340b673a417eaffb9b7873c2bd3fed04976513a3e86b6d3b0e5150ba2168c1",
   "sizeBytes": 32786969
 }
